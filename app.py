@@ -11,16 +11,20 @@ from pydantic import BaseModel, Field
 from aw_client import AWClient
 from classifier import FastClassifier
 from config import (
+    ALT_LOCAL_GGUF_NAME,
+    ALT_LOCAL_GGUF_REPO,
     BASE_DIR,
     DEFAULT_CATEGORIES,
     DEFAULT_CONFIDENCE_THRESHOLD,
     DEFAULT_GEMMA_BACKEND,
     DEFAULT_GEMMA_MODEL,
+    DEFAULT_LOCAL_GGUF_NAME,
+    DEFAULT_LOCAL_GGUF_REPO,
     DEFAULT_TARGET_BUCKET_ID,
     WEB_HOST,
     WEB_PORT,
 )
-from gemma_oracle import GemmaOracle
+from gemma_oracle import GemmaOracle, download_gemma_weights
 from pipeline import ClassificationPipeline
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -77,6 +81,11 @@ class EventCorrectionRequest(BaseModel):
     correct_category: str
 
 
+class DownloadGemmaRequest(BaseModel):
+    model: str = "gemma-4-e2b"
+    quant: str = "Q4_K_M"
+
+
 # API Routes
 @app.get("/api/status")
 def get_status() -> Dict[str, Any]:
@@ -97,6 +106,7 @@ def get_status() -> Dict[str, Any]:
         "ollama_host": gemma_oracle.ollama_host,
         "has_gemini_key": bool(gemma_oracle.gemini_api_key),
         "categories": classifier.categories,
+        "local_model": gemma_oracle.get_local_model_info(),
     }
 
     return {
@@ -106,6 +116,29 @@ def get_status() -> Dict[str, Any]:
         "confidence_threshold": pipeline.confidence_threshold,
         "last_run_stats": pipeline.last_run_stats,
     }
+
+
+@app.post("/api/download-gemma")
+def download_gemma_api(req: DownloadGemmaRequest) -> Dict[str, Any]:
+    """Download Gemma weights directly from Hugging Face for local in-process inference."""
+    try:
+        if req.model == "gemma-2-2b":
+            repo = ALT_LOCAL_GGUF_REPO
+            filename = f"gemma-2-2b-it-{req.quant}.gguf"
+        else:
+            repo = DEFAULT_LOCAL_GGUF_REPO
+            filename = f"gemma-4-E2B-it-{req.quant}.gguf"
+
+        path = download_gemma_weights(repo_id=repo, filename=filename)
+        gemma_oracle.local_gguf_path = str(path)
+        return {
+            "status": "success",
+            "path": str(path),
+            "local_model": gemma_oracle.get_local_model_info(),
+        }
+    except Exception as e:
+        logger.exception("Failed to download Gemma model weights")
+        raise HTTPException(status_code=500, detail=f"Download failed: {e}")
 
 
 @app.get("/api/buckets")

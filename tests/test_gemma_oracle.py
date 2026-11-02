@@ -36,3 +36,15 @@ def test_gemma_json_parser():
     parsed2 = oracle._parse_llm_json(alt_json, cats)
     assert parsed2 is not None
     assert parsed2["category"] == "Communication"
+
+
+def test_gemma_local_model_info_and_fallback():
+    oracle = GemmaOracle(backend="local")
+    info = oracle.get_local_model_info()
+    assert "available" in info
+    assert "size_gb" in info
+
+    # If no local model is currently downloaded, it should fall back safely without crashing
+    res = oracle.classify_activity(app="Code", title="test.py - Visual Studio Code", url="")
+    assert res["category"] == "Development"
+    assert res["confidence"] >= 0.9

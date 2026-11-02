@@ -277,15 +277,35 @@
         <div>
           <label class="block font-medium text-slate-300 mb-1">Gemma E2B Backend Engine</label>
           <select id="setting-gemma-backend" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-slate-200 focus:outline-none focus:border-indigo-500">
-            <option value="heuristic">Smart Heuristic Oracle (Zero latency, built-in)</option>
+            <option value="local">Local In-Process Gemma (Runs directly inside script via llama-cpp)</option>
+            <option value="heuristic">Smart Heuristic Oracle (Zero latency fallback, built-in)</option>
             <option value="ollama">Ollama Server (Local Gemma E2B / 2B)</option>
             <option value="gemini_api">Google Gemini API (Cloud Gemma/Gemini)</option>
             <option value="openai_compatible">OpenAI-Compatible (vLLM / LMStudio / LiteRT)</option>
-            <option value="llama_cpp">llama-cpp Local GGUF (CPU/GPU)</option>
           </select>
         </div>
 
-        <div id="ollama-options" class="space-y-3">
+        <div id="local-options" class="p-3 bg-slate-950/80 border border-slate-800 rounded-xl space-y-2">
+          <div class="flex items-center justify-between">
+            <span class="font-medium text-slate-300">Local GGUF Weights:</span>
+            <span id="local-model-status-badge" class="px-2 py-0.5 rounded text-[10px] font-mono bg-slate-800 text-slate-400">
+              Checking...
+            </span>
+          </div>
+          <div id="local-model-details" class="text-[11px] text-slate-400"></div>
+          <div class="flex items-center space-x-2 pt-1">
+            <button id="btn-download-gemma-ui" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-medium transition flex items-center space-x-1.5">
+              <i class="fa-solid fa-download"></i>
+              <span>Download Gemma 4 E2B</span>
+            </button>
+            <button id="btn-download-gemma2-ui" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs transition flex items-center space-x-1.5">
+              <i class="fa-solid fa-download"></i>
+              <span>Download Gemma 2 2B (Lightweight)</span>
+            </button>
+          </div>
+        </div>
+
+        <div id="ollama-options" class="space-y-3 hidden">
           <div>
             <label class="block font-medium text-slate-300 mb-1">Ollama Host URL</label>
             <input type="text" id="setting-ollama-host" value="http://127.0.0.1:11434" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-slate-200 font-mono" />

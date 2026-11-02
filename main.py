@@ -6,12 +6,17 @@ import uvicorn
 from aw_client import AWClient
 from classifier import FastClassifier
 from config import (
+    ALT_LOCAL_GGUF_NAME,
+    ALT_LOCAL_GGUF_REPO,
     DEFAULT_CONFIDENCE_THRESHOLD,
+    DEFAULT_LOCAL_GGUF_NAME,
+    DEFAULT_LOCAL_GGUF_REPO,
     DEFAULT_TARGET_BUCKET_ID,
+    MODELS_DIR,
     WEB_HOST,
     WEB_PORT,
 )
-from gemma_oracle import GemmaOracle
+from gemma_oracle import GemmaOracle, download_gemma_weights
 from pipeline import ClassificationPipeline
 
 
@@ -56,13 +61,34 @@ def main():
     )
     run_parser.add_argument(
         "--backend",
-        default="heuristic",
-        choices=["heuristic", "ollama", "gemini_api", "openai_compatible", "llama_cpp"],
-        help="Gemma backend to use for low-confidence events",
+        default="local",
+        choices=["local", "heuristic", "ollama", "gemini_api", "openai_compatible", "llama_cpp"],
+        help="Gemma backend to use for low-confidence events (default: local)",
+    )
+    run_parser.add_argument(
+        "--model-path",
+        default=None,
+        help="Explicit path to a local Gemma GGUF file",
     )
 
     # Status command
     status_parser = subparsers.add_parser("status", help="Show ActivityWatch & Classifier status")
+
+    # Download Gemma command
+    dl_parser = subparsers.add_parser(
+        "download-gemma", help="Download Gemma GGUF weights directly from Hugging Face"
+    )
+    dl_parser.add_argument(
+        "--model",
+        choices=["gemma-4-e2b", "gemma-2-2b"],
+        default="gemma-4-e2b",
+        help="Model variant to download",
+    )
+    dl_parser.add_argument(
+        "--quant",
+        default="Q4_K_M",
+        help="Quantization level (default: Q4_K_M, or Q3_K_M)",
+    )
 
     args = parser.parse_args()
 
@@ -75,6 +101,20 @@ def main():
         print(f" Dashboard running at: http://localhost:{port}")
         print(f"========================================================\n")
         uvicorn.run("app:app", host=host, port=port, reload=False)
+        return
+
+    if args.command == "download-gemma":
+        if args.model == "gemma-2-2b":
+            repo = ALT_LOCAL_GGUF_REPO
+            filename = f"gemma-2-2b-it-{args.quant}.gguf"
+        else:
+            repo = DEFAULT_LOCAL_GGUF_REPO
+            filename = f"gemma-4-E2B-it-{args.quant}.gguf"
+
+        print(f"Downloading {filename} from {repo}...")
+        print(f"Target directory: {MODELS_DIR}")
+        path = download_gemma_weights(repo_id=repo, filename=filename)
+        print(f"\nDownload complete! Model ready for local in-process inference at:\n  {path}")
         return
 
     if args.command == "status":
@@ -98,6 +138,17 @@ def main():
         print(f"  Trained: {stats['is_trained']}")
         print(f"  Training samples: {stats['total_training_samples']}")
         print(f"  Categories: {stats['all_configured_categories']}")
+
+        oracle = GemmaOracle()
+        local_info = oracle.get_local_model_info()
+        print("\nGemma E2B Local Engine:")
+        print(f"  Local GGUF Model Available: {local_info['available']}")
+        if local_info["available"]:
+            print(f"  Model File: {local_info['filename']} ({local_info['size_gb']} GB)")
+            print(f"  Model Path: {local_info['path']}")
+        else:
+            print("  No local GGUF found in models/.")
+            print("  To download directly, run: uv run python main.py download-gemma")
         return
 
     if args.command == "run":
@@ -108,7 +159,7 @@ def main():
         print(f"  Confidence Cut: {args.threshold}")
         print(f"  Gemma Backend:  {args.backend}\n")
 
-        oracle = GemmaOracle(backend=args.backend)
+        oracle = GemmaOracle(backend=args.backend, local_gguf_path=args.model_path)
         pipeline = ClassificationPipeline(gemma_oracle=oracle, confidence_threshold=args.threshold)
         results = pipeline.run(
             source_bucket_ids=args.source,

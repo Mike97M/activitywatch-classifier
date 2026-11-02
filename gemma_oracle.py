@@ -2,21 +2,48 @@
 
 import json
 import logging
+import os
 import re
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 import httpx
 
 from config import (
+    ALT_LOCAL_GGUF_NAME,
+    ALT_LOCAL_GGUF_REPO,
     DEFAULT_CATEGORIES,
     DEFAULT_GEMMA_BACKEND,
     DEFAULT_GEMMA_MODEL,
+    DEFAULT_LOCAL_GGUF_NAME,
+    DEFAULT_LOCAL_GGUF_REPO,
     GEMINI_API_KEY,
+    LOCAL_GGUF_PATH,
+    MODELS_DIR,
     OLLAMA_HOST,
     OPENAI_API_KEY,
     OPENAI_COMPATIBLE_URL,
 )
 
 logger = logging.getLogger("gemma_oracle")
+
+
+def download_gemma_weights(
+    repo_id: str = DEFAULT_LOCAL_GGUF_REPO,
+    filename: str = DEFAULT_LOCAL_GGUF_NAME,
+    target_dir: Path = MODELS_DIR,
+) -> Path:
+    """Download Gemma GGUF weights directly from Hugging Face for local in-process execution."""
+    from huggingface_hub import hf_hub_download
+
+    target_dir.mkdir(parents=True, exist_ok=True)
+    logger.info(f"Downloading {filename} from {repo_id} directly to {target_dir}...")
+    file_path = hf_hub_download(
+        repo_id=repo_id,
+        filename=filename,
+        local_dir=str(target_dir),
+    )
+    logger.info(f"Model saved to {file_path}")
+    return Path(file_path)
 
 
 class GemmaOracle:
@@ -40,8 +67,53 @@ class GemmaOracle:
         self.gemini_api_key = gemini_api_key
         self.openai_url = openai_url
         self.openai_key = openai_key
-        self.local_gguf_path = local_gguf_path
+        self.local_gguf_path = local_gguf_path or LOCAL_GGUF_PATH or None
         self._llama_model = None
+
+    def find_local_model_path(self) -> Optional[Path]:
+        """Locate downloaded GGUF weights in models directory or custom path."""
+        # Check explicit path
+        if self.local_gguf_path:
+            p = Path(self.local_gguf_path)
+            if p.exists() and p.is_file():
+                return p
+
+        # Search MODELS_DIR
+        if MODELS_DIR.exists():
+            # Check default names first
+            for candidate_name in [DEFAULT_LOCAL_GGUF_NAME, ALT_LOCAL_GGUF_NAME]:
+                cand = MODELS_DIR / candidate_name
+                if cand.exists() and cand.is_file():
+                    return cand
+
+            # Any .gguf in models directory
+            ggufs = list(MODELS_DIR.glob("*.gguf"))
+            if ggufs:
+                # Return the latest or gemma-named one
+                gemma_matches = [g for g in ggufs if "gemma" in g.name.lower()]
+                return gemma_matches[0] if gemma_matches else ggufs[0]
+
+        return None
+
+    def get_local_model_info(self) -> Dict[str, Any]:
+        """Return information about the local Gemma GGUF model."""
+        model_path = self.find_local_model_path()
+        if model_path:
+            size_gb = model_path.stat().st_size / (1024**3)
+            return {
+                "available": True,
+                "path": str(model_path),
+                "filename": model_path.name,
+                "size_gb": round(size_gb, 2),
+                "loaded_in_memory": self._llama_model is not None,
+            }
+        return {
+            "available": False,
+            "path": None,
+            "filename": None,
+            "size_gb": 0.0,
+            "loaded_in_memory": False,
+        }
 
     def update_settings(self, **kwargs):
         """Update oracle settings at runtime."""
@@ -62,19 +134,19 @@ class GemmaOracle:
         prompt = self._build_prompt(app, title, url, cats)
 
         # Dispatch based on backend
-        if self.backend == "ollama":
+        if self.backend in ["local", "llama_cpp"]:
+            result = self._call_llama_cpp(prompt, cats)
+        elif self.backend == "ollama":
             result = self._call_ollama(prompt, cats)
         elif self.backend == "gemini_api":
             result = self._call_gemini_api(prompt, cats)
         elif self.backend == "openai_compatible":
             result = self._call_openai_compatible(prompt, cats)
-        elif self.backend == "llama_cpp":
-            result = self._call_llama_cpp(prompt, cats)
         else:
             result = self._smart_heuristic_classify(app, title, url, cats)
 
         # Fallback to smart heuristic if LLM call failed or produced invalid category
-        if result.get("category") not in cats:
+        if not result or result.get("category") not in cats:
             heuristic_fallback = self._smart_heuristic_classify(app, title, url, cats)
             heuristic_fallback["reasoning"] = (
                 f"{heuristic_fallback.get('reasoning', '')} (Fallback from {self.backend})"
@@ -104,6 +176,11 @@ class GemmaOracle:
             # Strip markdown code blocks if any
             cleaned = re.sub(r"^```(?:json)?\s*", "", raw_text.strip(), flags=re.MULTILINE)
             cleaned = re.sub(r"```$", "", cleaned.strip(), flags=re.MULTILINE)
+            # Find outermost { ... }
+            match = re.search(r"\{.*?\}", cleaned, re.DOTALL)
+            if match:
+                cleaned = match.group(0)
+
             data = json.loads(cleaned.strip())
             category = data.get("category", "").strip()
             # Find best match in categories (case-insensitive)
@@ -118,6 +195,50 @@ class GemmaOracle:
         except Exception as e:
             logger.warning(f"Error parsing LLM JSON: {e}. Raw was: {raw_text[:200]}")
         return None
+
+    def _call_llama_cpp(self, prompt: str, categories: List[str]) -> Dict[str, Any]:
+        """Run Gemma locally directly in-process via llama-cpp-python."""
+        model_path = self.find_local_model_path()
+        if not model_path:
+            logger.warning(
+                "Local Gemma GGUF model not found in models/. "
+                "Run `uv run python main.py download-gemma` to download weights directly. "
+                "Gracefully falling back to heuristic oracle."
+            )
+            return {}
+
+        try:
+            if not self._llama_model:
+                from llama_cpp import Llama
+
+                logger.info(f"Loading local Gemma model in-process from: {model_path}...")
+                self._llama_model = Llama(
+                    model_path=str(model_path),
+                    n_ctx=2048,
+                    n_threads=4,
+                    verbose=False,
+                )
+                logger.info("Local Gemma model loaded successfully.")
+
+            output = self._llama_model.create_chat_completion(
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are Gemma E2B, an expert activity classifier.",
+                    },
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0.1,
+                max_tokens=150,
+            )
+            text = output["choices"][0]["message"]["content"]
+            parsed = self._parse_llm_json(text, categories)
+            if parsed:
+                parsed["backend"] = f"local_gguf ({model_path.name})"
+                return parsed
+        except Exception as e:
+            logger.error(f"Local llama-cpp execution error: {e}")
+        return {}
 
     def _call_ollama(self, prompt: str, categories: List[str]) -> Dict[str, Any]:
         """Query Ollama server."""
@@ -187,29 +308,6 @@ class GemmaOracle:
                     return parsed
         except Exception as e:
             logger.error(f"OpenAI-compatible call failed: {e}")
-        return {}
-
-    def _call_llama_cpp(self, prompt: str, categories: List[str]) -> Dict[str, Any]:
-        """Query local GGUF model via llama-cpp-python."""
-        try:
-            if not self._llama_model:
-                if not self.local_gguf_path:
-                    logger.warning("local_gguf_path not configured for llama_cpp backend.")
-                    return {}
-                from llama_cpp import Llama
-                self._llama_model = Llama(
-                    model_path=self.local_gguf_path,
-                    n_ctx=2048,
-                    n_threads=4,
-                    verbose=False,
-                )
-            output = self._llama_model(prompt, max_tokens=150, temperature=0.1)
-            text = output["choices"][0]["text"]
-            parsed = self._parse_llm_json(text, categories)
-            if parsed:
-                return parsed
-        except Exception as e:
-            logger.error(f"llama-cpp call failed: {e}")
         return {}
 
     def _smart_heuristic_classify(

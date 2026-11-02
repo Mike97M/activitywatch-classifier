@@ -74,89 +74,76 @@ An intelligent, non-destructive activity classification and active learning pipe
 
 ---
 
-## 🚀 Quickstart
+## ⚡ How Gemma Runs
+
+Gemma is executed **locally and directly in-process** inside the Python script via `llama-cpp-python`:
+- **No external server required**: No need to install or run Docker, Ollama, or third-party servers.
+- **In-process inference**: Model weights (`.gguf`) are loaded directly into RAM/CPU (or GPU if available) with multi-threaded inference (`n_threads=4`).
+- **Direct download from the script**:
+  ```bash
+  # Download Gemma 4 E2B Instruct GGUF weights directly into models/
+  uv run python main.py download-gemma --model gemma-4-e2b
+
+  # Or download the lightweight Gemma 2 2B Instruct variant (~1.7 GB)
+  uv run python main.py download-gemma --model gemma-2-2b
+  ```
+  *(You can also click the download button inside the Web UI Settings panel).*
+- **Pluggable Backends**: If preferred, you can also seamlessly switch backend to `ollama`, `gemini_api` (Google Cloud), `openai_compatible` (vLLM/LMStudio), or the built-in offline `heuristic` proxy.
+
+---
+
+## 🚀 Quickstart with `uv`
 
 ### 1. Requirements & Setup
 
-Make sure Python 3.10+ and an ActivityWatch instance are running.
+Make sure `uv` is installed and an ActivityWatch instance is running.
 
 ```bash
-# Clone and enter the repository
 cd path/to/activitywatch-classifier
 
-# Create virtual environment
-python3 -m venv --copies .venv
-source .venv/bin/activate
-
-# Install dependencies
-pip install -r requirements.txt
+# uv automatically locks and installs dependencies when running
+uv sync
 ```
 
-### 2. Launch the Web UI
+### 2. Download Gemma Weights Locally
 
 ```bash
-python main.py serve
+uv run python main.py download-gemma
+```
+
+### 3. Launch the Web UI
+
+```bash
+uv run python main.py serve
 ```
 Open **[http://localhost:5000](http://localhost:5000)** in your browser.
 
-- Select the source buckets you want to clone from (e.g. `aw-watcher-window_laptop`).
+- Select source buckets to clone from (e.g. `aw-watcher-window_laptop`).
 - Adjust the **Confidence Threshold** slider (default: `0.75`).
 - Click **"Start Non-Destructive Cloning & Gemma Classification"**.
 - View category distribution graphs, confidence metrics, and inspect the new bucket!
 
-### 3. CLI Usage
+### 4. CLI Usage
 
-You can also run classification or check status directly from the terminal:
+You can also run classification or check status directly from the terminal with `uv`:
 
 ```bash
-# Check connection to ActivityWatch and classifier state
-python main.py status
+# Check connection to ActivityWatch, classifier state, and local Gemma model
+uv run python main.py status
 
-# Run non-destructive cloning and classification
-python main.py run \
+# Run non-destructive cloning & classification
+uv run python main.py run \
   --source aw-watcher-window_laptop aw-watcher-web-brave_laptop \
   --target aw-classifier-categorized \
   --limit 200 \
   --threshold 0.75 \
-  --backend heuristic
+  --backend local
 ```
 
----
-
-## ⚙️ Configuration & Gemma Backends
-
-Settings can be customized via the Web UI Settings modal, CLI arguments, or environment variables in `.env`:
-
-| Variable | Default | Description |
-|---|---|---|
-| `AW_SERVER_URL` | Auto-detected | ActivityWatch server endpoint (`http://localhost:5600`) |
-| `CONFIDENCE_THRESHOLD` | `0.75` | Probability cutoff below which Gemma is called |
-| `GEMMA_BACKEND` | `heuristic` | Engine: `heuristic`, `ollama`, `gemini_api`, `openai_compatible`, `llama_cpp` |
-| `GEMMA_MODEL` | `google/gemma-4-E2B-it` | Model identifier or tag |
-| `OLLAMA_HOST` | `http://127.0.0.1:11434` | Ollama service address |
-| `GEMINI_API_KEY` | `""` | Google Gemini API key if using cloud backend |
-| `WEB_PORT` | `5000` | Port for the web dashboard |
-
-### Default Category Taxonomy
-- **Development**: IDEs, terminals, git, StackOverflow, documentation, debugging.
-- **Communication**: Slack, Discord, Telegram, Teams, Zoom, email.
-- **Browsing & Research**: Articles, Wikipedia, search engines.
-- **Productivity & Planning**: Obsidian, Notion, Todoist, spreadsheets, docs.
-- **Media & Entertainment**: YouTube, Spotify, VLC, Netflix, games.
-- **Social Media**: X / Twitter, Reddit, LinkedIn, Mastodon.
-- **System & Admin**: OS settings, btop, package management.
-- **Uncategorized**: General desktop activity.
-
-*(Categories can be dynamically modified in the UI or configuration).*
-
----
-
-## 🧪 Testing
-
-Run the automated test suite with pytest:
+### 5. Automated Tests
 
 ```bash
-PYTHONPATH=. .venv/bin/pytest tests/ -v
+uv run pytest tests/ -v
 ```
 
 ---

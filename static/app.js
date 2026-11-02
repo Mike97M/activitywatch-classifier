@@ -59,10 +59,26 @@ async function fetchStatus() {
     }
 
     // Pre-fill settings modal
-    document.getElementById("setting-gemma-backend").value = data.gemma_oracle.backend || "heuristic";
+    document.getElementById("setting-gemma-backend").value = data.gemma_oracle.backend || "local";
     document.getElementById("setting-ollama-host").value = data.gemma_oracle.ollama_host || "http://127.0.0.1:11434";
     document.getElementById("setting-gemma-model").value = data.gemma_oracle.model_name || "google/gemma-4-E2B-it";
     document.getElementById("setting-categories").value = currentCategories.join(", ");
+
+    // Local model status badge
+    const localInfo = data.gemma_oracle.local_model || {};
+    const badge = document.getElementById("local-model-status-badge");
+    const details = document.getElementById("local-model-details");
+    if (badge && details) {
+      if (localInfo.available) {
+        badge.className = "px-2 py-0.5 rounded text-[10px] font-mono bg-emerald-950 text-emerald-300 border border-emerald-800/60";
+        badge.textContent = "Weights Ready";
+        details.textContent = `${localInfo.filename} (${localInfo.size_gb} GB) in models/`;
+      } else {
+        badge.className = "px-2 py-0.5 rounded text-[10px] font-mono bg-amber-950 text-amber-300 border border-amber-800/60";
+        badge.textContent = "No weights found";
+        details.textContent = "No local GGUF in models/. Click download below or run: uv run python main.py download-gemma";
+      }
+    }
   } catch (err) {
     console.error("Status fetch failed:", err);
   }
@@ -448,8 +464,16 @@ function setupEventListeners() {
 
   document.getElementById("setting-gemma-backend").addEventListener("change", (e) => {
     const val = e.target.value;
+    document.getElementById("local-options").classList.toggle("hidden", val !== "local");
     document.getElementById("ollama-options").classList.toggle("hidden", val !== "ollama");
     document.getElementById("gemini-options").classList.toggle("hidden", val !== "gemini_api");
+  });
+
+  document.getElementById("btn-download-gemma-ui").addEventListener("click", () => {
+    downloadGemmaFromUI("gemma-4-e2b");
+  });
+  document.getElementById("btn-download-gemma2-ui").addEventListener("click", () => {
+    downloadGemmaFromUI("gemma-2-2b");
   });
 
   document.getElementById("btn-save-settings").addEventListener("click", async () => {
@@ -491,6 +515,39 @@ function setupEventListeners() {
   document.getElementById("btn-close-raw").addEventListener("click", () => {
     rawModal.classList.add("hidden");
   });
+}
+
+async function downloadGemmaFromUI(modelName) {
+  const btn1 = document.getElementById("btn-download-gemma-ui");
+  const btn2 = document.getElementById("btn-download-gemma2-ui");
+  const details = document.getElementById("local-model-details");
+
+  btn1.disabled = true;
+  btn2.disabled = true;
+  details.textContent = `Downloading ${modelName} weights directly from Hugging Face... This may take a few minutes depending on your internet connection.`;
+
+  try {
+    const res = await fetch("/api/download-gemma", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: modelName, quant: "Q4_K_M" }),
+    });
+
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || "Download failed");
+    }
+
+    const data = await res.json();
+    alert(`Success! Downloaded Gemma weights to ${data.path}`);
+    await fetchStatus();
+  } catch (err) {
+    alert("Download failed: " + err.message);
+    details.textContent = "Download failed: " + err.message;
+  } finally {
+    btn1.disabled = false;
+    btn2.disabled = false;
+  }
 }
 
 function getCategoryBadgeClass(category) {

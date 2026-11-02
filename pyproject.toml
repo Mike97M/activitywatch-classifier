@@ -1,0 +1,34 @@
+[project]
+name = "activitywatch-classifier"
+version = "0.1.0"
+description = "ActivityWatch Classifier & Active Learning Pipeline with Gemma E2B Oracle"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+    "pydantic>=2.8.0",
+    "scikit-learn>=1.5.0",
+    "numpy>=1.26.0",
+    "scipy>=1.13.0",
+    "httpx>=0.27.0",
+    "requests>=2.32.0",
+    "python-multipart>=0.0.9",
+    "joblib>=1.4.0",
+    "huggingface-hub>=0.24.0",
+    "llama-cpp-python>=0.3.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+]
+
+[project.scripts]
+aw-classifier = "main:main"
+
+[tool.uv]
+link-mode = "copy"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]

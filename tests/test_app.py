@@ -14,6 +14,7 @@ def test_get_status():
     assert "classifier" in data
     assert "gemma_oracle" in data
     assert "confidence_threshold" in data
+    assert "local_model" in data["gemma_oracle"]
 
 
 def test_get_buckets():

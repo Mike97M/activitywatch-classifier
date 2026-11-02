@@ -47,13 +47,20 @@ MODEL_PATH = MODELS_DIR / "fast_classifier.joblib"
 TRAINING_DATA_PATH = DATA_DIR / "training_data.jsonl"
 
 # Gemma E2B / LLM Configuration
-# Backends supported: 'ollama', 'gemini_api', 'openai_compatible', 'llama_cpp', 'heuristic'
-DEFAULT_GEMMA_BACKEND = os.environ.get("GEMMA_BACKEND", "heuristic")
+# Backends supported: 'local' (or 'llama_cpp'), 'ollama', 'gemini_api', 'openai_compatible', 'heuristic'
+DEFAULT_GEMMA_BACKEND = os.environ.get("GEMMA_BACKEND", "local")
 DEFAULT_GEMMA_MODEL = os.environ.get("GEMMA_MODEL", "google/gemma-4-E2B-it")
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 OPENAI_COMPATIBLE_URL = os.environ.get("OPENAI_COMPATIBLE_URL", "http://127.0.0.1:8000/v1")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
+
+# Local In-Process GGUF Model Settings
+DEFAULT_LOCAL_GGUF_REPO = "unsloth/gemma-4-E2B-it-GGUF"
+DEFAULT_LOCAL_GGUF_NAME = "gemma-4-E2B-it-Q4_K_M.gguf"
+ALT_LOCAL_GGUF_REPO = "bartowski/gemma-2-2b-it-GGUF"
+ALT_LOCAL_GGUF_NAME = "gemma-2-2b-it-Q4_K_M.gguf"
+LOCAL_GGUF_PATH = os.environ.get("LOCAL_GGUF_PATH", "")
 
 # Server Web UI
 WEB_HOST = os.environ.get("WEB_HOST", "0.0.0.0")
