@@ -2,6 +2,7 @@
 
 import logging
 from typing import Any, Callable, Dict, List, Optional
+from anonymizer import anonymizer
 from aw_client import AWClient
 from classifier import FastClassifier
 from config import DEFAULT_CONFIDENCE_THRESHOLD, DEFAULT_TARGET_BUCKET_ID
@@ -62,12 +63,13 @@ class ClassificationPipeline:
                 continue
 
             for event in events:
-                data = event.get("data", {})
-                app = data.get("app", "")
-                title = data.get("title", "")
-                url = data.get("url", "")
+                raw_data = event.get("data", {})
+                clean_data = anonymizer.sanitize_event_data(raw_data)
+                app = clean_data.get("app", "")
+                title = clean_data.get("title", "")
+                url = clean_data.get("url", "")
 
-                feature_text = self.classifier.extract_features(data)
+                feature_text = self.classifier.extract_features(clean_data)
 
                 # Attempt fast prediction
                 pred_category, confidence, prob_dict = self.classifier.predict(feature_text)
@@ -105,8 +107,8 @@ class ClassificationPipeline:
                 )
                 total_processed += 1
 
-                # Construct the enriched non-destructive event for the target bucket
-                cloned_data = dict(data)
+                # Construct the enriched non-destructive event for the target bucket (PII sanitized)
+                cloned_data = dict(clean_data)
                 cloned_data["category"] = chosen_category
                 cloned_data["confidence"] = round(chosen_confidence, 4)
                 cloned_data["classified_by"] = classified_by

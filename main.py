@@ -6,12 +6,11 @@ import uvicorn
 from aw_client import AWClient
 from classifier import FastClassifier
 from config import (
-    ALT_LOCAL_GGUF_NAME,
-    ALT_LOCAL_GGUF_REPO,
     DEFAULT_CONFIDENCE_THRESHOLD,
     DEFAULT_LOCAL_GGUF_NAME,
     DEFAULT_LOCAL_GGUF_REPO,
     DEFAULT_TARGET_BUCKET_ID,
+    LIGHT_LOCAL_GGUF_NAME,
     MODELS_DIR,
     WEB_HOST,
     WEB_PORT,
@@ -76,18 +75,13 @@ def main():
 
     # Download Gemma command
     dl_parser = subparsers.add_parser(
-        "download-gemma", help="Download Gemma GGUF weights directly from Hugging Face"
+        "download-gemma", help="Download Gemma 4 E2B GGUF weights directly from Hugging Face"
     )
     dl_parser.add_argument(
-        "--model",
-        choices=["gemma-4-e2b", "gemma-2-2b"],
-        default="gemma-4-e2b",
-        help="Model variant to download",
-    )
-    dl_parser.add_argument(
-        "--quant",
-        default="Q4_K_M",
-        help="Quantization level (default: Q4_K_M, or Q3_K_M)",
+        "--variant",
+        choices=["standard", "light"],
+        default="standard",
+        help="Gemma 4 E2B variant: 'standard' (Q4_K_M ~3.1 GB) or 'light' (Q3_K_M ~2.5 GB)",
     )
 
     args = parser.parse_args()
@@ -104,14 +98,12 @@ def main():
         return
 
     if args.command == "download-gemma":
-        if args.model == "gemma-2-2b":
-            repo = ALT_LOCAL_GGUF_REPO
-            filename = f"gemma-2-2b-it-{args.quant}.gguf"
-        else:
-            repo = DEFAULT_LOCAL_GGUF_REPO
-            filename = f"gemma-4-E2B-it-{args.quant}.gguf"
+        repo = DEFAULT_LOCAL_GGUF_REPO
+        filename = (
+            LIGHT_LOCAL_GGUF_NAME if args.variant == "light" else DEFAULT_LOCAL_GGUF_NAME
+        )
 
-        print(f"Downloading {filename} from {repo}...")
+        print(f"Downloading Gemma 4 E2B ({filename}) from {repo}...")
         print(f"Target directory: {MODELS_DIR}")
         path = download_gemma_weights(repo_id=repo, filename=filename)
         print(f"\nDownload complete! Model ready for local in-process inference at:\n  {path}")

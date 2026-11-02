@@ -12,12 +12,13 @@ An intelligent, non-destructive activity classification and active learning pipe
   - **Tier 2 (Gemma E2B Oracle)**: When the fast classifier's confidence score drops below the confidence threshold (e.g. `< 0.75`), **Gemma E2B** is automatically summoned to analyze the app, window title, and URL context.
   - **Self-Improving Online Retraining**: Every activity classified by Gemma is added to the training set, immediately retraining and improving the fast model.
 - **Human-in-the-Loop Feedback**: Interactive UI allows correcting any activity's category with a single click, instantly feeding the correction back into the model.
+- **Automatic PII & Personal Data Scrubbing**: Before training samples or classified activities are saved or committed to Git, an active anonymizer removes usernames, shell prompt identities (`user@host`), private home paths (`/home/username/...`), emails, IP addresses, contact names, and sensitive URL tokens/credentials.
 - **Multiple Gemma Backends**:
+  - `local`: Direct in-process Gemma 4 E2B execution via `llama-cpp-python` (CPU/GPU).
   - `heuristic`: Built-in zero-latency smart oracle for instant offline use.
-  - `ollama`: Connects to local/remote Ollama (`gemma-4-e2b`, `gemma:2b`).
+  - `ollama`: Connects to local/remote Ollama (`gemma-4-e2b`).
   - `gemini_api`: Google Gemini/Gemma API endpoint.
   - `openai_compatible`: Any OpenAI-compatible server (vLLM, LM Studio, LiteRT).
-  - `llama_cpp`: Local GGUF models on CPU/GPU via `llama-cpp-python`.
 - **Modern Responsive Web UI**: Dashboard with live bucket discovery, category distribution chart, confidence tuning slider, and real-time activity stream.
 
 ---
@@ -81,11 +82,11 @@ Gemma is executed **locally and directly in-process** inside the Python script v
 - **In-process inference**: Model weights (`.gguf`) are loaded directly into RAM/CPU (or GPU if available) with multi-threaded inference (`n_threads=4`).
 - **Direct download from the script**:
   ```bash
-  # Download Gemma 4 E2B Instruct GGUF weights directly into models/
-  uv run python main.py download-gemma --model gemma-4-e2b
+  # Download Gemma 4 E2B Instruct GGUF weights directly into models/ (Standard Q4_K_M ~3.1 GB)
+  uv run python main.py download-gemma --variant standard
 
-  # Or download the lightweight Gemma 2 2B Instruct variant (~1.7 GB)
-  uv run python main.py download-gemma --model gemma-2-2b
+  # Or download the lightweight Gemma 4 E2B variant (Q3_K_M ~2.5 GB)
+  uv run python main.py download-gemma --variant light
   ```
   *(You can also click the download button inside the Web UI Settings panel).*
 - **Pluggable Backends**: If preferred, you can also seamlessly switch backend to `ollama`, `gemini_api` (Google Cloud), `openai_compatible` (vLLM/LMStudio), or the built-in offline `heuristic` proxy.

@@ -11,8 +11,6 @@ from pydantic import BaseModel, Field
 from aw_client import AWClient
 from classifier import FastClassifier
 from config import (
-    ALT_LOCAL_GGUF_NAME,
-    ALT_LOCAL_GGUF_REPO,
     BASE_DIR,
     DEFAULT_CATEGORIES,
     DEFAULT_CONFIDENCE_THRESHOLD,
@@ -21,6 +19,7 @@ from config import (
     DEFAULT_LOCAL_GGUF_NAME,
     DEFAULT_LOCAL_GGUF_REPO,
     DEFAULT_TARGET_BUCKET_ID,
+    LIGHT_LOCAL_GGUF_NAME,
     WEB_HOST,
     WEB_PORT,
 )
@@ -82,8 +81,7 @@ class EventCorrectionRequest(BaseModel):
 
 
 class DownloadGemmaRequest(BaseModel):
-    model: str = "gemma-4-e2b"
-    quant: str = "Q4_K_M"
+    variant: str = "standard"  # "standard" (Q4_K_M) or "light" (Q3_K_M)
 
 
 # API Routes
@@ -120,14 +118,12 @@ def get_status() -> Dict[str, Any]:
 
 @app.post("/api/download-gemma")
 def download_gemma_api(req: DownloadGemmaRequest) -> Dict[str, Any]:
-    """Download Gemma weights directly from Hugging Face for local in-process inference."""
+    """Download Gemma 4 E2B weights directly from Hugging Face for local in-process inference."""
     try:
-        if req.model == "gemma-2-2b":
-            repo = ALT_LOCAL_GGUF_REPO
-            filename = f"gemma-2-2b-it-{req.quant}.gguf"
-        else:
-            repo = DEFAULT_LOCAL_GGUF_REPO
-            filename = f"gemma-4-E2B-it-{req.quant}.gguf"
+        repo = DEFAULT_LOCAL_GGUF_REPO
+        filename = (
+            LIGHT_LOCAL_GGUF_NAME if req.variant == "light" else DEFAULT_LOCAL_GGUF_NAME
+        )
 
         path = download_gemma_weights(repo_id=repo, filename=filename)
         gemma_oracle.local_gguf_path = str(path)
@@ -137,7 +133,7 @@ def download_gemma_api(req: DownloadGemmaRequest) -> Dict[str, Any]:
             "local_model": gemma_oracle.get_local_model_info(),
         }
     except Exception as e:
-        logger.exception("Failed to download Gemma model weights")
+        logger.exception("Failed to download Gemma 4 E2B model weights")
         raise HTTPException(status_code=500, detail=f"Download failed: {e}")
 
 

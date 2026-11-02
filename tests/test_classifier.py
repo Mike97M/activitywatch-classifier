@@ -52,3 +52,16 @@ def test_classifier_active_learning_flow():
         cat2, conf2, _ = clf.predict("app:slack title:product design channel")
         assert cat2 == "Communication"
         assert conf2 > 0.4
+
+
+def test_classifier_extract_features_anonymization():
+    event_data = {
+        "app": "foot",
+        "title": "jdoe@laptop:/home/jdoe/Developement/secret",
+        "url": "https://company.org/login?token=secret1234567890",
+    }
+    feat = FastClassifier.extract_features(event_data)
+    assert "jdoe" not in feat
+    assert "secret1234567890" not in feat
+    assert "<user>" in feat or "<path>" in feat
+    assert "redacted" in feat

@@ -9,14 +9,13 @@ from typing import Any, Dict, List, Optional
 import httpx
 
 from config import (
-    ALT_LOCAL_GGUF_NAME,
-    ALT_LOCAL_GGUF_REPO,
     DEFAULT_CATEGORIES,
     DEFAULT_GEMMA_BACKEND,
     DEFAULT_GEMMA_MODEL,
     DEFAULT_LOCAL_GGUF_NAME,
     DEFAULT_LOCAL_GGUF_REPO,
     GEMINI_API_KEY,
+    LIGHT_LOCAL_GGUF_NAME,
     LOCAL_GGUF_PATH,
     MODELS_DIR,
     OLLAMA_HOST,
@@ -81,7 +80,7 @@ class GemmaOracle:
         # Search MODELS_DIR
         if MODELS_DIR.exists():
             # Check default names first
-            for candidate_name in [DEFAULT_LOCAL_GGUF_NAME, ALT_LOCAL_GGUF_NAME]:
+            for candidate_name in [DEFAULT_LOCAL_GGUF_NAME, LIGHT_LOCAL_GGUF_NAME]:
                 cand = MODELS_DIR / candidate_name
                 if cand.exists() and cand.is_file():
                     return cand

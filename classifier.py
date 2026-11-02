@@ -10,6 +10,7 @@ import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import SGDClassifier
 
+from anonymizer import anonymizer
 from config import DEFAULT_CATEGORIES, MODEL_PATH, TRAINING_DATA_PATH
 
 logger = logging.getLogger("classifier")
@@ -67,9 +68,34 @@ class FastClassifier:
 
         if self.training_data_path.exists():
             try:
+                raw_samples = []
                 with open(self.training_data_path, "r", encoding="utf-8") as f:
-                    self.training_samples = [json.loads(line) for line in f if line.strip()]
-                logger.info(f"Loaded {len(self.training_samples)} historic training examples.")
+                    for line in f:
+                        if line.strip():
+                            raw_samples.append(json.loads(line))
+
+                # Sanitize all historic samples to ensure zero legacy PII
+                needs_rewrite = False
+                sanitized_samples = []
+                for s in raw_samples:
+                    clean_text = anonymizer.sanitize_title(s["text"])
+                    if clean_text != s["text"]:
+                        needs_rewrite = True
+                    sanitized_samples.append({
+                        "text": clean_text,
+                        "category": s["category"],
+                        "source": s.get("source", "historic"),
+                    })
+
+                self.training_samples = sanitized_samples
+                logger.info(f"Loaded {len(self.training_samples)} sanitized training examples.")
+
+                if needs_rewrite:
+                    with open(self.training_data_path, "w", encoding="utf-8") as f:
+                        for s in self.training_samples:
+                            f.write(json.dumps(s) + "\n")
+                    logger.info("Rewrote training data file with all PII sanitized.")
+
                 # If we have training samples but model wasn't trained yet, fit it now
                 if not self.is_trained and len(self.training_samples) >= 2:
                     self.retrain_full()
@@ -78,10 +104,11 @@ class FastClassifier:
 
     @staticmethod
     def extract_features(event_data: Dict[str, Any]) -> str:
-        """Create clean textual signature from event payload."""
-        app = str(event_data.get("app") or "").strip().lower()
-        title = str(event_data.get("title") or "").strip().lower()
-        url = str(event_data.get("url") or "").strip().lower()
+        """Create sanitized textual signature from event payload with zero PII."""
+        clean_data = anonymizer.sanitize_event_data(event_data)
+        app = str(clean_data.get("app") or "").strip().lower()
+        title = str(clean_data.get("title") or "").strip().lower()
+        url = str(clean_data.get("url") or "").strip().lower()
 
         # Extract domain from url if present
         domain = ""
@@ -123,9 +150,10 @@ class FastClassifier:
         source: str = "gemma_oracle",
         retrain_now: bool = True,
     ):
-        """Record newly labeled sample from Gemma and update model."""
+        """Record newly labeled sample from Gemma and update model with full PII sanitization."""
+        clean_text = anonymizer.sanitize_title(feature_text)
         sample = {
-            "text": feature_text,
+            "text": clean_text,
             "category": category,
             "source": source,
         }

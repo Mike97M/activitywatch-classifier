@@ -470,10 +470,10 @@ function setupEventListeners() {
   });
 
   document.getElementById("btn-download-gemma-ui").addEventListener("click", () => {
-    downloadGemmaFromUI("gemma-4-e2b");
+    downloadGemmaFromUI("standard");
   });
   document.getElementById("btn-download-gemma2-ui").addEventListener("click", () => {
-    downloadGemmaFromUI("gemma-2-2b");
+    downloadGemmaFromUI("light");
   });
 
   document.getElementById("btn-save-settings").addEventListener("click", async () => {
@@ -517,20 +517,21 @@ function setupEventListeners() {
   });
 }
 
-async function downloadGemmaFromUI(modelName) {
+async function downloadGemmaFromUI(variant) {
   const btn1 = document.getElementById("btn-download-gemma-ui");
   const btn2 = document.getElementById("btn-download-gemma2-ui");
   const details = document.getElementById("local-model-details");
 
   btn1.disabled = true;
   btn2.disabled = true;
-  details.textContent = `Downloading ${modelName} weights directly from Hugging Face... This may take a few minutes depending on your internet connection.`;
+  const label = variant === "light" ? "Gemma 4 E2B Light (~2.5 GB)" : "Gemma 4 E2B Standard (~3.1 GB)";
+  details.textContent = `Downloading ${label} weights directly from Hugging Face... This may take a few minutes depending on your internet connection.`;
 
   try {
     const res = await fetch("/api/download-gemma", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model: modelName, quant: "Q4_K_M" }),
+      body: JSON.stringify({ variant: variant }),
     });
 
     if (!res.ok) {
@@ -539,7 +540,7 @@ async function downloadGemmaFromUI(modelName) {
     }
 
     const data = await res.json();
-    alert(`Success! Downloaded Gemma weights to ${data.path}`);
+    alert(`Success! Downloaded Gemma 4 E2B weights to ${data.path}`);
     await fetchStatus();
   } catch (err) {
     alert("Download failed: " + err.message);

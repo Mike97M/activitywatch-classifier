@@ -55,11 +55,10 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 OPENAI_COMPATIBLE_URL = os.environ.get("OPENAI_COMPATIBLE_URL", "http://127.0.0.1:8000/v1")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 
-# Local In-Process GGUF Model Settings
+# Local In-Process Gemma 4 E2B GGUF Model Settings
 DEFAULT_LOCAL_GGUF_REPO = "unsloth/gemma-4-E2B-it-GGUF"
 DEFAULT_LOCAL_GGUF_NAME = "gemma-4-E2B-it-Q4_K_M.gguf"
-ALT_LOCAL_GGUF_REPO = "bartowski/gemma-2-2b-it-GGUF"
-ALT_LOCAL_GGUF_NAME = "gemma-2-2b-it-Q4_K_M.gguf"
+LIGHT_LOCAL_GGUF_NAME = "gemma-4-E2B-it-Q3_K_M.gguf"
 LOCAL_GGUF_PATH = os.environ.get("LOCAL_GGUF_PATH", "")
 
 # Server Web UI
