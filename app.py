@@ -45,7 +45,7 @@ classifier = FastClassifier(categories=list(DEFAULT_CATEGORIES))
 gemma_oracle = GemmaOracle(
     backend=DEFAULT_GEMMA_BACKEND,
     model_name=DEFAULT_GEMMA_MODEL,
-    categories=classifier.categories,
+    taxonomy=classifier.taxonomy,
 )
 pipeline = ClassificationPipeline(
     aw_client=aw_client,
@@ -78,6 +78,7 @@ class RunPipelineRequest(BaseModel):
 class EventCorrectionRequest(BaseModel):
     feature_text: str
     correct_category: str
+    correct_subcategory: Optional[str] = None
 
 
 class DownloadGemmaRequest(BaseModel):
@@ -104,6 +105,7 @@ def get_status() -> Dict[str, Any]:
         "ollama_host": gemma_oracle.ollama_host,
         "has_gemini_key": bool(gemma_oracle.gemini_api_key),
         "categories": classifier.categories,
+        "taxonomy": classifier.taxonomy,
         "local_model": gemma_oracle.get_local_model_info(),
     }
 
@@ -200,13 +202,14 @@ def run_pipeline(req: RunPipelineRequest) -> Dict[str, Any]:
 
 @app.post("/api/correct-event")
 def correct_event(req: EventCorrectionRequest) -> Dict[str, Any]:
-    """Submit human correction to retrain the fast classifier on the fly."""
+    """Submit human correction to retrain the fast classifier on the fly with hierarchical taxonomy."""
     if not req.feature_text or not req.correct_category:
         raise HTTPException(status_code=400, detail="Missing feature_text or correct_category")
 
     classifier.add_training_sample(
         feature_text=req.feature_text,
         category=req.correct_category,
+        subcategory=req.correct_subcategory,
         source="human_correction",
         retrain_now=True,
     )

@@ -1,8 +1,7 @@
-"""Fast ML Classifier with Calibrated Confidence Scoring and Online Active Learning."""
+"""Fast ML Classifier with Calibrated Confidence Scoring, Hierarchical Taxonomy, and Online Active Learning."""
 
 import json
 import logging
-import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 import joblib
@@ -11,21 +10,31 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import SGDClassifier
 
 from anonymizer import anonymizer
-from config import DEFAULT_CATEGORIES, MODEL_PATH, TRAINING_DATA_PATH
+from config import (
+    DEFAULT_CATEGORIES,
+    DEFAULT_TAXONOMY,
+    MODEL_PATH,
+    TRAINING_DATA_PATH,
+    flatten_taxonomy,
+    split_category_path,
+)
 
 logger = logging.getLogger("classifier")
 
 
 class FastClassifier:
-    """Fast, local classifier providing real-time predictions and calibrated confidence scores."""
+    """Fast, local classifier providing real-time hierarchical predictions and calibrated confidence scores."""
 
     def __init__(
         self,
+        taxonomy: Optional[Dict[str, List[str]]] = None,
         categories: Optional[List[str]] = None,
         model_path: Path = MODEL_PATH,
         training_data_path: Path = TRAINING_DATA_PATH,
     ):
-        self.categories = sorted(categories or list(DEFAULT_CATEGORIES))
+        self.taxonomy = taxonomy or dict(DEFAULT_TAXONOMY)
+        self.categories = sorted(categories or list(self.taxonomy.keys()))
+        self.full_categories = sorted(flatten_taxonomy(self.taxonomy))
         self.model_path = Path(model_path)
         self.training_data_path = Path(training_data_path)
 
@@ -37,7 +46,7 @@ class FastClassifier:
             sublinear_tf=True,
         )
 
-        # SGDClassifier with log_loss provides logistic regression with incremental partial_fit
+        # SGDClassifier with log_loss provides logistic regression with incremental learning
         self.model = SGDClassifier(
             loss="log_loss",
             penalty="l2",
@@ -50,7 +59,7 @@ class FastClassifier:
         self.is_trained = False
         self.training_samples: List[Dict[str, str]] = []
 
-        # Attempt to load saved state
+        # Load existing state if available
         self._load_existing_state()
 
     def _load_existing_state(self):
@@ -74,16 +83,38 @@ class FastClassifier:
                         if line.strip():
                             raw_samples.append(json.loads(line))
 
-                # Sanitize all historic samples to ensure zero legacy PII
+                # Sanitize all historic samples and ensure hierarchical format
                 needs_rewrite = False
                 sanitized_samples = []
                 for s in raw_samples:
-                    clean_text = anonymizer.sanitize_title(s["text"])
-                    if clean_text != s["text"]:
+                    raw_text = s.get("text", "")
+                    clean_text = anonymizer.sanitize_title(raw_text)
+                    if clean_text != raw_text:
                         needs_rewrite = True
+
+                    cat_raw = s.get("category", "Uncategorized")
+                    subcat_raw = s.get("subcategory")
+                    full_raw = s.get("full_category")
+
+                    if not full_raw:
+                        if " > " in cat_raw:
+                            full_raw = cat_raw
+                            cat, sub = split_category_path(full_raw)
+                        elif subcat_raw:
+                            full_raw = f"{cat_raw} > {subcat_raw}"
+                            cat, sub = cat_raw, subcat_raw
+                        else:
+                            cat, sub = cat_raw, "General"
+                            full_raw = f"{cat} > {sub}"
+                        needs_rewrite = True
+                    else:
+                        cat, sub = split_category_path(full_raw)
+
                     sanitized_samples.append({
                         "text": clean_text,
-                        "category": s["category"],
+                        "category": cat,
+                        "subcategory": sub,
+                        "full_category": full_raw,
                         "source": s.get("source", "historic"),
                     })
 
@@ -94,9 +125,9 @@ class FastClassifier:
                     with open(self.training_data_path, "w", encoding="utf-8") as f:
                         for s in self.training_samples:
                             f.write(json.dumps(s) + "\n")
-                    logger.info("Rewrote training data file with all PII sanitized.")
+                    logger.info("Rewrote training data file with clean PII and taxonomy format.")
 
-                # If we have training samples but model wasn't trained yet, fit it now
+                # If we have training samples, train or retrain
                 if not self.is_trained and len(self.training_samples) >= 2:
                     self.retrain_full()
             except Exception as e:
@@ -110,7 +141,6 @@ class FastClassifier:
         title = str(clean_data.get("title") or "").strip().lower()
         url = str(clean_data.get("url") or "").strip().lower()
 
-        # Extract domain from url if present
         domain = ""
         if url.startswith("http://") or url.startswith("https://"):
             parts = url.split("/")
@@ -120,13 +150,9 @@ class FastClassifier:
         return f"app:{app} domain:{domain} title:{title} url:{url}"
 
     def predict(self, feature_text: str) -> Tuple[str, float, Dict[str, float]]:
-        """Predict category and return calibrated confidence score (0.0 to 1.0).
-
-        Returns: (predicted_category, confidence_score, all_class_probabilities)
-        """
+        """Predict full category (Category > Subcategory) and confidence score."""
         if not self.is_trained:
-            # Model has not seen enough data yet
-            return ("Uncategorized", 0.0, {})
+            return ("Uncategorized > General", 0.0, {})
 
         try:
             X = self.vectorizer.transform([feature_text])
@@ -134,70 +160,89 @@ class FastClassifier:
             classes = self.model.classes_
 
             best_idx = int(np.argmax(probs))
-            predicted_category = str(classes[best_idx])
+            predicted_full = str(classes[best_idx])
             confidence = float(probs[best_idx])
 
             prob_dict = {str(c): float(p) for c, p in zip(classes, probs)}
-            return (predicted_category, confidence, prob_dict)
+            return (predicted_full, confidence, prob_dict)
         except Exception as e:
             logger.error(f"Prediction failed: {e}")
-            return ("Uncategorized", 0.0, {})
+            return ("Uncategorized > General", 0.0, {})
+
+    def predict_hierarchy(
+        self, feature_text: str
+    ) -> Tuple[str, str, str, float, Dict[str, float]]:
+        """Predict category, subcategory, full_category, and confidence score."""
+        full_cat, conf, probs = self.predict(feature_text)
+        cat, subcat = split_category_path(full_cat)
+        return (cat, subcat, full_cat, conf, probs)
 
     def add_training_sample(
         self,
         feature_text: str,
         category: str,
+        subcategory: Optional[str] = None,
         source: str = "gemma_oracle",
         retrain_now: bool = True,
     ):
-        """Record newly labeled sample from Gemma and update model with full PII sanitization."""
+        """Record newly labeled sample with full hierarchy and PII sanitization."""
         clean_text = anonymizer.sanitize_title(feature_text)
+
+        if subcategory:
+            cat = category.strip()
+            sub = subcategory.strip()
+            full_cat = f"{cat} > {sub}"
+        elif " > " in category:
+            full_cat = category.strip()
+            cat, sub = split_category_path(full_cat)
+        else:
+            cat = category.strip()
+            sub = "General"
+            full_cat = f"{cat} > {sub}"
+
         sample = {
             "text": clean_text,
-            "category": category,
+            "category": cat,
+            "subcategory": sub,
+            "full_category": full_cat,
             "source": source,
         }
         self.training_samples.append(sample)
 
-        # Append to jsonl
         try:
             with open(self.training_data_path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(sample) + "\n")
         except Exception as e:
             logger.warning(f"Failed to append sample to {self.training_data_path}: {e}")
 
-        # Update categories if new category encountered
-        if category not in self.categories:
-            self.categories.append(category)
+        if cat not in self.categories:
+            self.categories.append(cat)
             self.categories.sort()
 
         if retrain_now:
-            # If we already have multiple classes represented, incremental fit or retrain
-            unique_classes = set(s["category"] for s in self.training_samples)
+            unique_classes = set(s["full_category"] for s in self.training_samples)
             if len(unique_classes) >= 2:
                 self.retrain_full()
 
     def retrain_full(self) -> bool:
-        """Full retrain on all accumulated training data."""
+        """Full retrain on all accumulated hierarchical training data."""
         if not self.training_samples:
             return False
 
         texts = [s["text"] for s in self.training_samples]
-        labels = [s["category"] for s in self.training_samples]
+        labels = [s["full_category"] for s in self.training_samples]
 
         unique_labels = sorted(list(set(labels)))
         if len(unique_labels) < 2:
-            # Cannot train a classifier with only 1 class
             return False
 
         try:
-            # Refit vectorizer and model
             X = self.vectorizer.fit_transform(texts)
             self.model.fit(X, labels)
             self.is_trained = True
             self.save_model()
             logger.info(
-                f"Retrained classifier successfully on {len(texts)} samples across {len(unique_labels)} classes."
+                f"Retrained classifier successfully on {len(texts)} samples across {len(unique_labels)} hierarchical classes."
             )
             return True
         except Exception as e:
@@ -219,16 +264,22 @@ class FastClassifier:
             logger.warning(f"Could not save model to {self.model_path}: {e}")
 
     def get_stats(self) -> Dict[str, Any]:
-        """Summary metrics of current classifier state."""
+        """Summary metrics of current classifier state with category and subcategory counts."""
         category_counts: Dict[str, int] = {}
+        subcategory_counts: Dict[str, int] = {}
+
         for s in self.training_samples:
-            c = s["category"]
+            c = s.get("category", "Uncategorized")
+            full = s.get("full_category", f"{c} > General")
             category_counts[c] = category_counts.get(c, 0) + 1
+            subcategory_counts[full] = subcategory_counts.get(full, 0) + 1
 
         return {
             "is_trained": self.is_trained,
             "total_training_samples": len(self.training_samples),
             "classes_trained": list(self.model.classes_) if self.is_trained else [],
             "category_distribution": category_counts,
+            "subcategory_distribution": subcategory_counts,
             "all_configured_categories": self.categories,
+            "taxonomy": self.taxonomy,
         }

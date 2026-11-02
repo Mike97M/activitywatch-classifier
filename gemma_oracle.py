@@ -1,4 +1,4 @@
-"""Gemma E2B Oracle: High-intelligence active classifier and teacher for low-confidence events."""
+"""Gemma E2B Oracle: High-intelligence active classifier with hierarchical subcategories."""
 
 import json
 import logging
@@ -9,11 +9,11 @@ from typing import Any, Dict, List, Optional
 import httpx
 
 from config import (
-    DEFAULT_CATEGORIES,
     DEFAULT_GEMMA_BACKEND,
     DEFAULT_GEMMA_MODEL,
     DEFAULT_LOCAL_GGUF_NAME,
     DEFAULT_LOCAL_GGUF_REPO,
+    DEFAULT_TAXONOMY,
     GEMINI_API_KEY,
     LIGHT_LOCAL_GGUF_NAME,
     LOCAL_GGUF_PATH,
@@ -21,6 +21,8 @@ from config import (
     OLLAMA_HOST,
     OPENAI_API_KEY,
     OPENAI_COMPATIBLE_URL,
+    flatten_taxonomy,
+    split_category_path,
 )
 
 logger = logging.getLogger("gemma_oracle")
@@ -46,12 +48,13 @@ def download_gemma_weights(
 
 
 class GemmaOracle:
-    """Invoked when the fast classifier has low confidence, serving as the teacher model."""
+    """Invoked when the fast classifier has low confidence, serving as the hierarchical teacher."""
 
     def __init__(
         self,
         backend: str = DEFAULT_GEMMA_BACKEND,
         model_name: str = DEFAULT_GEMMA_MODEL,
+        taxonomy: Optional[Dict[str, List[str]]] = None,
         categories: Optional[List[str]] = None,
         ollama_host: str = OLLAMA_HOST,
         gemini_api_key: str = GEMINI_API_KEY,
@@ -61,7 +64,8 @@ class GemmaOracle:
     ):
         self.backend = backend.lower()
         self.model_name = model_name
-        self.categories = categories or list(DEFAULT_CATEGORIES)
+        self.taxonomy = taxonomy or dict(DEFAULT_TAXONOMY)
+        self.categories = categories or list(self.taxonomy.keys())
         self.ollama_host = ollama_host
         self.gemini_api_key = gemini_api_key
         self.openai_url = openai_url
@@ -71,24 +75,19 @@ class GemmaOracle:
 
     def find_local_model_path(self) -> Optional[Path]:
         """Locate downloaded GGUF weights in models directory or custom path."""
-        # Check explicit path
         if self.local_gguf_path:
             p = Path(self.local_gguf_path)
             if p.exists() and p.is_file():
                 return p
 
-        # Search MODELS_DIR
         if MODELS_DIR.exists():
-            # Check default names first
             for candidate_name in [DEFAULT_LOCAL_GGUF_NAME, LIGHT_LOCAL_GGUF_NAME]:
                 cand = MODELS_DIR / candidate_name
                 if cand.exists() and cand.is_file():
                     return cand
 
-            # Any .gguf in models directory
             ggufs = list(MODELS_DIR.glob("*.gguf"))
             if ggufs:
-                # Return the latest or gemma-named one
                 gemma_matches = [g for g in ggufs if "gemma" in g.name.lower()]
                 return gemma_matches[0] if gemma_matches else ggufs[0]
 
@@ -126,27 +125,27 @@ class GemmaOracle:
         app: str,
         title: str,
         url: Optional[str] = None,
-        categories: Optional[List[str]] = None,
+        taxonomy: Optional[Dict[str, List[str]]] = None,
     ) -> Dict[str, Any]:
-        """Classify an activity using the configured Gemma backend."""
-        cats = categories or self.categories
-        prompt = self._build_prompt(app, title, url, cats)
+        """Classify an activity into Category and Subcategory."""
+        tax = taxonomy or self.taxonomy
+        prompt = self._build_prompt(app, title, url, tax)
 
         # Dispatch based on backend
         if self.backend in ["local", "llama_cpp"]:
-            result = self._call_llama_cpp(prompt, cats)
+            result = self._call_llama_cpp(prompt, tax)
         elif self.backend == "ollama":
-            result = self._call_ollama(prompt, cats)
+            result = self._call_ollama(prompt, tax)
         elif self.backend == "gemini_api":
-            result = self._call_gemini_api(prompt, cats)
+            result = self._call_gemini_api(prompt, tax)
         elif self.backend == "openai_compatible":
-            result = self._call_openai_compatible(prompt, cats)
+            result = self._call_openai_compatible(prompt, tax)
         else:
-            result = self._smart_heuristic_classify(app, title, url, cats)
+            result = self._smart_heuristic_classify(app, title, url, tax)
 
         # Fallback to smart heuristic if LLM call failed or produced invalid category
-        if not result or result.get("category") not in cats:
-            heuristic_fallback = self._smart_heuristic_classify(app, title, url, cats)
+        if not result or result.get("category") not in tax:
+            heuristic_fallback = self._smart_heuristic_classify(app, title, url, tax)
             heuristic_fallback["reasoning"] = (
                 f"{heuristic_fallback.get('reasoning', '')} (Fallback from {self.backend})"
             )
@@ -155,47 +154,78 @@ class GemmaOracle:
         return result
 
     def _build_prompt(
-        self, app: str, title: str, url: Optional[str], categories: List[str]
+        self,
+        app: str,
+        title: str,
+        url: Optional[str],
+        taxonomy: Dict[str, List[str]],
     ) -> str:
-        cat_list = ", ".join(f'"{c}"' for c in categories)
+        tax_lines = []
+        for cat, subcats in taxonomy.items():
+            sub_str = ", ".join(subcats)
+            tax_lines.append(f"- {cat}: [{sub_str}]")
+        taxonomy_text = "\n".join(tax_lines)
+
         return (
             f"You are Gemma E2B, an expert activity classifier for ActivityWatch.\n"
-            f"Task: Categorize the following user activity into exactly ONE of these categories: [{cat_list}].\n\n"
+            f"Task: Categorize the following user activity into exactly ONE category and a matching subcategory from this taxonomy:\n\n"
+            f"{taxonomy_text}\n\n"
             f"Activity Details:\n"
             f"- Application: {app or 'unknown'}\n"
             f"- Window / Tab Title: {title or 'unknown'}\n"
             f"- URL: {url or 'none'}\n\n"
             f"Respond with ONLY a valid JSON object in this exact schema, with no markdown fences:\n"
-            f'{{"category": "<category_name>", "confidence": 0.95, "reasoning": "<brief 1-sentence reasoning>"}}'
+            f'{{"category": "<Category>", "subcategory": "<Subcategory>", "confidence": 0.95, "reasoning": "<1-sentence reasoning>"}}'
         )
 
-    def _parse_llm_json(self, raw_text: str, categories: List[str]) -> Optional[Dict[str, Any]]:
+    def _parse_llm_json(
+        self, raw_text: str, taxonomy: Dict[str, List[str]]
+    ) -> Optional[Dict[str, Any]]:
         """Clean and extract json payload from LLM generation."""
         try:
-            # Strip markdown code blocks if any
             cleaned = re.sub(r"^```(?:json)?\s*", "", raw_text.strip(), flags=re.MULTILINE)
             cleaned = re.sub(r"```$", "", cleaned.strip(), flags=re.MULTILINE)
-            # Find outermost { ... }
             match = re.search(r"\{.*?\}", cleaned, re.DOTALL)
             if match:
                 cleaned = match.group(0)
 
             data = json.loads(cleaned.strip())
-            category = data.get("category", "").strip()
-            # Find best match in categories (case-insensitive)
-            matched_cat = next((c for c in categories if c.lower() == category.lower()), None)
-            if matched_cat:
-                return {
-                    "category": matched_cat,
-                    "confidence": float(data.get("confidence", 0.95)),
-                    "reasoning": data.get("reasoning", "Classified by Gemma E2B"),
-                    "backend": self.backend,
-                }
+            category_raw = str(data.get("category", "")).strip()
+            subcategory_raw = str(data.get("subcategory", "")).strip()
+
+            # Match category (case-insensitive)
+            matched_cat = next(
+                (c for c in taxonomy.keys() if c.lower() == category_raw.lower()), None
+            )
+            if not matched_cat:
+                return None
+
+            # Match subcategory within category
+            valid_subs = taxonomy[matched_cat]
+            matched_sub = next(
+                (s for s in valid_subs if s.lower() == subcategory_raw.lower()), None
+            )
+            if not matched_sub:
+                # Substring match or default to first
+                matched_sub = next(
+                    (s for s in valid_subs if subcategory_raw.lower() in s.lower()),
+                    valid_subs[0] if valid_subs else "General",
+                )
+
+            full_cat = f"{matched_cat} > {matched_sub}"
+            return {
+                "category": matched_cat,
+                "subcategory": matched_sub,
+                "full_category": full_cat,
+                "confidence": float(data.get("confidence", 0.95)),
+                "reasoning": data.get("reasoning", "Classified by Gemma E2B"),
+                "backend": self.backend,
+            }
         except Exception as e:
             logger.warning(f"Error parsing LLM JSON: {e}. Raw was: {raw_text[:200]}")
         return None
 
-    def _call_llama_cpp(self, prompt: str, categories: List[str]) -> Dict[str, Any]:
+    def _call_llama_cpp(self, prompt: str, taxonomy: Dict[str, List[str]]) -> Dict[str, Any]:
         """Run Gemma locally directly in-process via llama-cpp-python."""
         model_path = self.find_local_model_path()
         if not model_path:
@@ -231,7 +261,7 @@ class GemmaOracle:
                 max_tokens=150,
             )
             text = output["choices"][0]["message"]["content"]
-            parsed = self._parse_llm_json(text, categories)
+            parsed = self._parse_llm_json(text, taxonomy)
             if parsed:
                 parsed["backend"] = f"local_gguf ({model_path.name})"
                 return parsed
@@ -239,7 +269,7 @@ class GemmaOracle:
             logger.error(f"Local llama-cpp execution error: {e}")
         return {}
 
-    def _call_ollama(self, prompt: str, categories: List[str]) -> Dict[str, Any]:
+    def _call_ollama(self, prompt: str, taxonomy: Dict[str, List[str]]) -> Dict[str, Any]:
         """Query Ollama server."""
         try:
             url = f"{self.ollama_host.rstrip('/')}/api/generate"
@@ -253,14 +283,14 @@ class GemmaOracle:
                 resp = client.post(url, json=payload)
                 resp.raise_for_status()
                 response_text = resp.json().get("response", "")
-                parsed = self._parse_llm_json(response_text, categories)
+                parsed = self._parse_llm_json(response_text, taxonomy)
                 if parsed:
                     return parsed
         except Exception as e:
             logger.error(f"Ollama call failed: {e}")
         return {}
 
-    def _call_gemini_api(self, prompt: str, categories: List[str]) -> Dict[str, Any]:
+    def _call_gemini_api(self, prompt: str, taxonomy: Dict[str, List[str]]) -> Dict[str, Any]:
         """Query Google Gemini API endpoint."""
         if not self.gemini_api_key:
             logger.warning("No GEMINI_API_KEY set.")
@@ -279,14 +309,16 @@ class GemmaOracle:
                 resp.raise_for_status()
                 data = resp.json()
                 text = data["candidates"][0]["content"]["parts"][0]["text"]
-                parsed = self._parse_llm_json(text, categories)
+                parsed = self._parse_llm_json(text, taxonomy)
                 if parsed:
                     return parsed
         except Exception as e:
             logger.error(f"Gemini API call failed: {e}")
         return {}
 
-    def _call_openai_compatible(self, prompt: str, categories: List[str]) -> Dict[str, Any]:
+    def _call_openai_compatible(
+        self, prompt: str, taxonomy: Dict[str, List[str]]
+    ) -> Dict[str, Any]:
         """Query any OpenAI-compatible server (vLLM, LMStudio, LocalAI)."""
         try:
             url = f"{self.openai_url.rstrip('/')}/chat/completions"
@@ -302,7 +334,7 @@ class GemmaOracle:
                 resp = client.post(url, json=payload, headers=headers)
                 resp.raise_for_status()
                 content = resp.json()["choices"][0]["message"]["content"]
-                parsed = self._parse_llm_json(content, categories)
+                parsed = self._parse_llm_json(content, taxonomy)
                 if parsed:
                     return parsed
         except Exception as e:
@@ -314,90 +346,134 @@ class GemmaOracle:
         app: str,
         title: str,
         url: Optional[str],
-        categories: List[str],
+        taxonomy: Dict[str, List[str]],
     ) -> Dict[str, Any]:
-        """Knowledge-grounded heuristic classifier.
-
-        Acts as an immediate, reliable fallback or offline Gemma proxy
-        capturing rich patterns across developer tools, communication, and browsing.
-        """
+        """Granular heuristic classifier outputting Category and Subcategory."""
         combined = f"{app} {title} {url or ''}".lower()
 
-        # Development
-        dev_signals = [
-            "code", "vscode", "vscodium", "vim", "nvim", "foot", "alacritty", "kitty",
-            "terminal", "bash", "zsh", "tmux", "github", "gitlab", "bitbucket",
-            "stackoverflow", "git", "python", "rust", "cargo", "docker", "gemma",
-            "serpextractor", "jupyter", "developer", "localhost", "127.0.0.1", "diff",
-            "pull request", "commit", "bug", "sdk", "api", "sshfs"
-        ]
-        # Communication
-        comm_signals = [
-            "slack", "discord", "telegram", "teams", "zoom", "meet", "signal",
-            "whatsapp", "mail", "thunderbird", "outlook", "gmail", "inbox"
-        ]
-        # Social Media
-        social_signals = [
-            "x.com", "twitter", "reddit", "linkedin", "instagram", "facebook",
-            "mastodon", "threads.net", "tiktok"
-        ]
-        # Media & Entertainment
-        media_signals = [
-            "youtube", "spotify", "netflix", "twitch", "vlc", "mpv", "steam",
-            "prime video", "music", "podcast", "hulu"
-        ]
-        # Productivity & Planning
-        prod_signals = [
-            "notion", "obsidian", "todoist", "calendar", "sheets", "docs", "libreoffice",
-            "calc", "writer", "trello", "jira", "confluence", "linear", "excalidraw"
-        ]
-        # System & Admin
-        sys_signals = [
-            "settings", "btop", "htop", "gnome-control", "file manager", "nautilus",
-            "dolphin", "dconf", "system monitor", "yast", "zypper", "pacman"
-        ]
-
-        def match_signals(signals):
-            return any(sig in combined for sig in signals)
-
-        def pick_if_exists(target: str, default: str = "Uncategorized") -> str:
-            if target in categories:
-                return target
-            for c in categories:
-                if target.lower() in c.lower():
-                    return c
-            return default if default in categories else categories[0]
+        def pick_sub(cat: str, target_sub: str) -> str:
+            subs = taxonomy.get(cat, ["General"])
+            for s in subs:
+                if target_sub.lower() in s.lower() or s.lower() in target_sub.lower():
+                    return s
+            return subs[0] if subs else "General"
 
         category = "Uncategorized"
-        reason = "Matched by intelligent domain heuristic"
+        subcategory = "General Activity"
+        reason = "Matched by domain heuristic"
 
-        if match_signals(social_signals):
-            category = pick_if_exists("Social Media")
-            reason = "Detected social media platform or community"
-        elif match_signals(dev_signals):
-            category = pick_if_exists("Development")
-            reason = "Identified programming, terminal, or engineering tooling"
-        elif match_signals(comm_signals):
-            category = pick_if_exists("Communication")
-            reason = "Detected chat, email, or team communication client"
-        elif match_signals(media_signals):
-            category = pick_if_exists("Media & Entertainment")
-            reason = "Detected streaming, audio, or entertainment platform"
-        elif match_signals(prod_signals):
-            category = pick_if_exists("Productivity & Planning")
-            reason = "Detected task management, notes, or office document"
-        elif match_signals(sys_signals):
-            category = pick_if_exists("System & Admin")
-            reason = "Detected system configuration, monitor, or OS utility"
+        # 1. Social Media
+        if any(sig in combined for sig in ["x.com", "twitter"]):
+            category = "Social Media"
+            subcategory = pick_sub("Social Media", "X / Twitter")
+            reason = "Detected X / Twitter microblogging"
+        elif any(sig in combined for sig in ["reddit"]):
+            category = "Social Media"
+            subcategory = pick_sub("Social Media", "Reddit & Communities")
+            reason = "Detected Reddit community browsing"
+        elif any(sig in combined for sig in ["linkedin"]):
+            category = "Social Media"
+            subcategory = pick_sub("Social Media", "LinkedIn & Professional")
+            reason = "Detected professional networking"
+
+        # 2. Media & Entertainment
+        elif any(sig in combined for sig in ["youtube", "netflix", "twitch", "vlc", "mpv", "prime video"]):
+            category = "Media & Entertainment"
+            subcategory = pick_sub("Media & Entertainment", "Video & Streaming")
+            reason = "Detected streaming video or media playback"
+        elif any(sig in combined for sig in ["spotify", "music", "podcast", "soundcloud"]):
+            category = "Media & Entertainment"
+            subcategory = pick_sub("Media & Entertainment", "Music & Audio")
+            reason = "Detected audio or music streaming"
+        elif any(sig in combined for sig in ["steam", "lutris", "heroic", "game", "retroarch"]):
+            category = "Media & Entertainment"
+            subcategory = pick_sub("Media & Entertainment", "Gaming")
+            reason = "Detected gaming platform or application"
+
+        # 3. Communication
+        elif any(sig in combined for sig in ["mail", "thunderbird", "outlook", "gmail", "inbox"]):
+            category = "Communication"
+            subcategory = pick_sub("Communication", "Email")
+            reason = "Detected email client or inbox"
+        elif any(sig in combined for sig in ["zoom", "meet", "teams meeting", "call"]):
+            category = "Communication"
+            subcategory = pick_sub("Communication", "Calls & Meetings")
+            reason = "Detected audio/video conference"
+        elif any(sig in combined for sig in ["slack", "discord", "telegram", "signal", "whatsapp", "teams"]):
+            category = "Communication"
+            subcategory = pick_sub("Communication", "Team Chat")
+            reason = "Detected team or personal instant messaging"
+
+        # 4. Development
+        elif any(sig in combined for sig in ["terminal", "bash", "zsh", "foot", "alacritty", "kitty", "tmux", "sshfs", "ssh"]):
+            category = "Development"
+            subcategory = pick_sub("Development", "DevOps & Terminal")
+            reason = "Detected shell terminal, SSH session, or command-line environment"
+        elif any(sig in combined for sig in ["git", "github", "gitlab", "pull request", "commit", "diff", "bitbucket"]):
+            category = "Development"
+            subcategory = pick_sub("Development", "Git & Code Review")
+            reason = "Detected version control or repository code review"
+        elif any(sig in combined for sig in ["stackoverflow", "devdocs", "api reference", "documentation", "man "]):
+            category = "Development"
+            subcategory = pick_sub("Development", "Documentation & API")
+            reason = "Detected programming documentation or StackOverflow"
+        elif any(sig in combined for sig in ["code", "vscode", "vscodium", "vim", "nvim", "pycharm", "rust", "cargo", "python", "serpextractor"]):
+            category = "Development"
+            subcategory = pick_sub("Development", "Coding & IDE")
+            reason = "Detected source code editor or software engineering"
+
+        # 5. Productivity & Planning
+        elif any(sig in combined for sig in ["notion", "obsidian", "logseq", "wiki"]):
+            category = "Productivity & Planning"
+            subcategory = pick_sub("Productivity & Planning", "Notes & Knowledge Base")
+            reason = "Detected personal knowledge base or note-taking app"
+        elif any(sig in combined for sig in ["todoist", "jira", "trello", "linear", "task"]):
+            category = "Productivity & Planning"
+            subcategory = pick_sub("Productivity & Planning", "Task & Project Management")
+            reason = "Detected project management or issue tracker"
+        elif any(sig in combined for sig in ["sheets", "calc", "excel", "docs", "writer", "libreoffice", "word"]):
+            category = "Productivity & Planning"
+            subcategory = pick_sub("Productivity & Planning", "Docs & Spreadsheets")
+            reason = "Detected office document or spreadsheet"
+
+        # 6. System & Admin
+        elif any(sig in combined for sig in ["settings", "control", "gnome-control", "yast", "preferences"]):
+            category = "System & Admin"
+            subcategory = pick_sub("System & Admin", "OS & Desktop Settings")
+            reason = "Detected system settings or preferences"
+        elif any(sig in combined for sig in ["btop", "htop", "system monitor", "task manager"]):
+            category = "System & Admin"
+            subcategory = pick_sub("System & Admin", "Hardware & System Monitor")
+            reason = "Detected system resource monitor"
+        elif any(sig in combined for sig in ["zypper", "pacman", "apt", "dnf", "package"]):
+            category = "System & Admin"
+            subcategory = pick_sub("System & Admin", "Package Management")
+            reason = "Detected software package manager"
+
+        # 7. Browsing & Research
         elif url or "browser" in app.lower():
-            category = pick_if_exists("Browsing & Research")
-            reason = "Web exploration or article research"
+            if any(sig in combined for sig in ["arxiv", "paper", "research", "rfc", "whitepaper"]):
+                category = "Browsing & Research"
+                subcategory = pick_sub("Browsing & Research", "Technical Articles & Papers")
+                reason = "Detected research paper or technical publication"
+            elif any(sig in combined for sig in ["amazon", "ebay", "cart", "checkout", "store", "shop"]):
+                category = "Browsing & Research"
+                subcategory = pick_sub("Browsing & Research", "Shopping & E-Commerce")
+                reason = "Detected online shopping or retail website"
+            else:
+                category = "Browsing & Research"
+                subcategory = pick_sub("Browsing & Research", "Search & Exploration")
+                reason = "General web search and page exploration"
         else:
-            category = pick_if_exists("Uncategorized")
-            reason = "General desktop activity"
+            category = "Uncategorized"
+            subcategory = pick_sub("Uncategorized", "General Activity")
+            reason = "General desktop window activity"
 
+        full_cat = f"{category} > {subcategory}"
         return {
             "category": category,
+            "subcategory": subcategory,
+            "full_category": full_cat,
             "confidence": 0.96,
             "reasoning": reason,
             "backend": "gemma_heuristic_proxy",

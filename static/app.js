@@ -1,6 +1,10 @@
 /* ActivityWatch Classifier Frontend Application */
 
 let currentCategories = [];
+let currentTaxonomy = {};
+let currentCategoryDist = {};
+let currentSubcategoryDist = {};
+let chartMode = "main"; // 'main' or 'sub'
 let categoryChart = null;
 let lastEvents = [];
 
@@ -50,12 +54,15 @@ async function fetchStatus() {
     document.getElementById("confidence-threshold-slider").value = data.confidence_threshold;
 
     currentCategories = data.classifier.all_configured_categories || [];
+    currentTaxonomy = data.classifier.taxonomy || data.gemma_oracle.taxonomy || {};
 
     // Last run stats if available
     if (data.last_run_stats && data.last_run_stats.total_events_processed) {
       document.getElementById("stat-fast-calls").textContent = data.last_run_stats.fast_classifier_calls || 0;
       document.getElementById("stat-gemma-calls").textContent = data.last_run_stats.gemma_oracle_calls || 0;
-      updateChart(data.last_run_stats.category_distribution || {});
+      currentCategoryDist = data.last_run_stats.category_distribution || {};
+      currentSubcategoryDist = data.last_run_stats.subcategory_distribution || {};
+      refreshChart();
     }
 
     // Pre-fill settings modal
@@ -184,7 +191,9 @@ async function runPipeline() {
     document.getElementById("stat-training-samples").textContent = results.classifier_stats?.total_training_samples || 0;
 
     // Update chart
-    updateChart(results.category_distribution || {});
+    currentCategoryDist = results.category_distribution || {};
+    currentSubcategoryDist = results.subcategory_distribution || {};
+    refreshChart();
 
     // Render preview events
     if (results.recent_preview) {
@@ -221,6 +230,8 @@ async function loadTargetEvents(targetBucketId = null) {
       title: e.data?.title || "",
       url: e.data?.url || "",
       category: e.data?.category || "Uncategorized",
+      subcategory: e.data?.subcategory || "General Activity",
+      full_category: e.data?.full_category || `${e.data?.category || "Uncategorized"} > General`,
       confidence: e.data?.confidence || 0.0,
       classified_by: e.data?.classified_by || "Unknown",
       reasoning: e.data?.reasoning || "",
@@ -269,7 +280,13 @@ function renderEventsTable(events) {
         ${ev.url ? `<div class="truncate text-[10px] text-indigo-400 font-mono">${escapeHtml(ev.url)}</div>` : ""}
       </td>
       <td class="px-4 py-3 whitespace-nowrap">
-        <span class="category-tag ${catClass}">${escapeHtml(ev.category)}</span>
+        <div class="flex flex-col space-y-1">
+          <span class="category-tag ${catClass}">${escapeHtml(ev.category)}</span>
+          <span class="text-[10px] text-slate-400 font-medium flex items-center pl-1">
+            <i class="fa-solid fa-angle-right text-[8px] text-slate-600 mr-1"></i>
+            ${escapeHtml(ev.subcategory || "General")}
+          </span>
+        </div>
       </td>
       <td class="px-4 py-3 whitespace-nowrap font-mono">
         <div class="flex items-center space-x-2">
@@ -304,26 +321,46 @@ function openCorrectionDialog(idx) {
   const ev = lastEvents[idx];
   if (!ev) return;
 
-  const currentCat = ev.category;
-  const promptOptions = currentCategories.map((c, i) => `${i + 1}. ${c}`).join("\n");
+  const currentFull = ev.full_category || `${ev.category} > ${ev.subcategory || 'General'}`;
+
+  // Build flattened taxonomy list
+  let options = [];
+  for (const [cat, subcats] of Object.entries(currentTaxonomy)) {
+    for (const sub of subcats) {
+      options.push(`${cat} > ${sub}`);
+    }
+  }
+  if (options.length === 0) {
+    options = currentCategories.map((c) => `${c} > General`);
+  }
+
+  const promptOptions = options.map((opt, i) => `${i + 1}. ${opt}`).join("\n");
   const choice = prompt(
-    `Reclassify Activity:\nApp: ${ev.app}\nTitle: ${ev.title}\n\nCurrent: ${currentCat}\n\nEnter category name or number:\n${promptOptions}`,
-    currentCat
+    `Reclassify Activity:\nApp: ${ev.app}\nTitle: ${ev.title}\n\nCurrent: ${currentFull}\n\nEnter number or "Category > Subcategory":\n${promptOptions}`,
+    currentFull
   );
 
   if (!choice || choice.trim() === "") return;
 
-  let chosenCat = choice.trim();
-  const num = parseInt(chosenCat, 10);
-  if (!isNaN(num) && num >= 1 && num <= currentCategories.length) {
-    chosenCat = currentCategories[num - 1];
+  let chosenPath = choice.trim();
+  const num = parseInt(chosenPath, 10);
+  if (!isNaN(num) && num >= 1 && num <= options.length) {
+    chosenPath = options[num - 1];
+  }
+
+  let cat = chosenPath;
+  let sub = "General";
+  if (chosenPath.includes(" > ")) {
+    const parts = chosenPath.split(" > ");
+    cat = parts[0].trim();
+    sub = parts[1].trim();
   }
 
   const featureText = `app:${ev.app} title:${ev.title} url:${ev.url}`;
-  submitCorrection(featureText, chosenCat, idx);
+  submitCorrection(featureText, cat, sub, idx);
 }
 
-async function submitCorrection(featureText, correctCategory, idx) {
+async function submitCorrection(featureText, correctCategory, correctSubcategory, idx) {
   try {
     const res = await fetch("/api/correct-event", {
       method: "POST",
@@ -331,12 +368,15 @@ async function submitCorrection(featureText, correctCategory, idx) {
       body: JSON.stringify({
         feature_text: featureText,
         correct_category: correctCategory,
+        correct_subcategory: correctSubcategory,
       }),
     });
 
     if (res.ok) {
       if (lastEvents[idx]) {
         lastEvents[idx].category = correctCategory;
+        lastEvents[idx].subcategory = correctSubcategory;
+        lastEvents[idx].full_category = `${correctCategory} > ${correctSubcategory}`;
         lastEvents[idx].confidence = 1.0;
         lastEvents[idx].classified_by = "Human Feedback (Retrained)";
         renderEventsTable(lastEvents);
@@ -389,6 +429,11 @@ function initChart() {
   });
 }
 
+function refreshChart() {
+  const dist = chartMode === "main" ? currentCategoryDist : currentSubcategoryDist;
+  updateChart(dist);
+}
+
 function updateChart(dist) {
   const labels = Object.keys(dist);
   const data = Object.values(dist);
@@ -416,6 +461,24 @@ function setupEventListeners() {
   document.getElementById("btn-run-pipeline").addEventListener("click", runPipeline);
   document.getElementById("btn-refresh-buckets").addEventListener("click", fetchBuckets);
   document.getElementById("btn-refresh-events").addEventListener("click", () => loadTargetEvents());
+
+  // Chart Mode Toggle (Main Categories vs Subcategories)
+  const btnMain = document.getElementById("btn-chart-main");
+  const btnSub = document.getElementById("btn-chart-sub");
+  if (btnMain && btnSub) {
+    btnMain.addEventListener("click", () => {
+      chartMode = "main";
+      btnMain.className = "px-2 py-0.5 rounded bg-indigo-600 text-white font-medium transition";
+      btnSub.className = "px-2 py-0.5 rounded text-slate-400 hover:text-white transition";
+      refreshChart();
+    });
+    btnSub.addEventListener("click", () => {
+      chartMode = "sub";
+      btnSub.className = "px-2 py-0.5 rounded bg-indigo-600 text-white font-medium transition";
+      btnMain.className = "px-2 py-0.5 rounded text-slate-400 hover:text-white transition";
+      refreshChart();
+    });
+  }
 
   // Slider change
   const slider = document.getElementById("confidence-threshold-slider");

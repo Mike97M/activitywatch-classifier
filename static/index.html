@@ -181,7 +181,13 @@
             <h2 class="text-base font-semibold text-white flex items-center">
               <i class="fa-solid fa-chart-pie text-purple-400 mr-2"></i> Category Distribution
             </h2>
-            <span class="text-xs text-slate-400" id="total-chart-events">0 events</span>
+            <div class="flex items-center space-x-2">
+              <div class="flex items-center bg-slate-950 p-0.5 rounded-lg border border-slate-800 text-[10px]">
+                <button id="btn-chart-main" class="px-2 py-0.5 rounded bg-indigo-600 text-white font-medium transition">Main</button>
+                <button id="btn-chart-sub" class="px-2 py-0.5 rounded text-slate-400 hover:text-white transition">Subcategories</button>
+              </div>
+              <span class="text-xs text-slate-400 font-mono" id="total-chart-events">0 events</span>
+            </div>
           </div>
           <div class="h-64 relative flex items-center justify-center">
             <canvas id="categoryChart"></canvas>
@@ -243,7 +249,7 @@
               <th class="px-4 py-3">Timestamp / Duration</th>
               <th class="px-4 py-3">Application</th>
               <th class="px-4 py-3">Window Title / URL</th>
-              <th class="px-4 py-3">Category</th>
+              <th class="px-4 py-3">Category &bull; Subcategory</th>
               <th class="px-4 py-3">Confidence</th>
               <th class="px-4 py-3">Classified By</th>
               <th class="px-4 py-3 text-right">Human Override</th>

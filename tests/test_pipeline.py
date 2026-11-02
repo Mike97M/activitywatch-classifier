@@ -57,5 +57,8 @@ def test_pipeline_active_learning_and_cloning():
         target_bid, inserted_events = args
         assert target_bid == "test-target"
         assert inserted_events[0]["data"]["category"] in ["Development", "Social Media"]
+        assert "subcategory" in inserted_events[0]["data"]
+        assert "full_category" in inserted_events[0]["data"]
+        assert "category_hierarchy" in inserted_events[0]["data"]
         assert "classified_by" in inserted_events[0]["data"]
         assert "confidence" in inserted_events[0]["data"]

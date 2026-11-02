@@ -2,7 +2,7 @@
 
 import os
 from pathlib import Path
-from typing import List
+from typing import Dict, List, Optional, Tuple
 
 # Base Paths
 BASE_DIR = Path(__file__).resolve().parent
@@ -29,17 +29,70 @@ DEFAULT_TARGET_BUCKET_ID = "aw-classifier-categorized"
 DEFAULT_TARGET_BUCKET_TYPE = "app.classified.activities"
 DEFAULT_CLIENT_NAME = "aw-gemma-classifier"
 
-# Default Taxonomy / Categories
-DEFAULT_CATEGORIES: List[str] = [
-    "Development",
-    "Communication",
-    "Browsing & Research",
-    "Productivity & Planning",
-    "Media & Entertainment",
-    "Social Media",
-    "System & Admin",
-    "Uncategorized",
-]
+# Hierarchical Taxonomy: Main Categories & Granular Subcategories
+DEFAULT_TAXONOMY: Dict[str, List[str]] = {
+    "Development": [
+        "Coding & IDE",
+        "DevOps & Terminal",
+        "Git & Code Review",
+        "Documentation & API",
+        "Debugging & Testing",
+    ],
+    "Communication": [
+        "Team Chat",
+        "Email",
+        "Calls & Meetings",
+    ],
+    "Browsing & Research": [
+        "Search & Exploration",
+        "Technical Articles & Papers",
+        "Shopping & E-Commerce",
+    ],
+    "Productivity & Planning": [
+        "Notes & Knowledge Base",
+        "Task & Project Management",
+        "Docs & Spreadsheets",
+    ],
+    "Media & Entertainment": [
+        "Video & Streaming",
+        "Music & Audio",
+        "Gaming",
+    ],
+    "Social Media": [
+        "X / Twitter",
+        "Reddit & Communities",
+        "LinkedIn & Professional",
+    ],
+    "System & Admin": [
+        "OS & Desktop Settings",
+        "Hardware & System Monitor",
+        "Package Management",
+    ],
+    "Uncategorized": [
+        "General Activity",
+    ],
+}
+
+DEFAULT_CATEGORIES: List[str] = list(DEFAULT_TAXONOMY.keys())
+
+
+def flatten_taxonomy(taxonomy: Optional[Dict[str, List[str]]] = None) -> List[str]:
+    """Return flat list of 'Category > Subcategory' paths."""
+    tax = taxonomy or DEFAULT_TAXONOMY
+    items: List[str] = []
+    for cat, subcats in tax.items():
+        for sub in subcats:
+            items.append(f"{cat} > {sub}")
+    return items
+
+
+def split_category_path(path: str) -> Tuple[str, str]:
+    """Parse 'Category > Subcategory' string into (category, subcategory)."""
+    if " > " in path:
+        parts = path.split(" > ", 1)
+        return parts[0].strip(), parts[1].strip()
+    return path.strip(), "General"
+
 
 # Active Learning & Fast Classifier Thresholds
 DEFAULT_CONFIDENCE_THRESHOLD = float(os.environ.get("CONFIDENCE_THRESHOLD", "0.75"))
