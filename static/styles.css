@@ -1,71 +1,200 @@
-/* Custom styles and scrollbar styling */
+/* ActivityWatch Authentic Design System & Theme Styles */
+@import url('https://fonts.googleapis.com/css2?family=Varela+Round&display=swap');
 
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+:root {
+  --aw-primary: #4DBA87;
+  --aw-primary-hover: #3ca374;
+  --aw-primary-light: rgba(77, 186, 135, 0.15);
+  --aw-primary-border: rgba(77, 186, 135, 0.4);
+  --aw-secondary: #35495E;
+  
+  /* Light Theme */
+  --aw-bg: #f7fafc;
+  --aw-card-bg: #ffffff;
+  --aw-border: #e2e8f0;
+  --aw-text-main: #2d3748;
+  --aw-text-muted: #718096;
+  --aw-navbar-bg: #ffffff;
+  --aw-table-hover: #f8fafc;
 }
 
-::-webkit-scrollbar-track {
-  background: rgba(15, 23, 42, 0.6);
+html.dark {
+  /* Dark Theme (ActivityWatch Dark) */
+  --aw-bg: #161b22;
+  --aw-card-bg: #21262d;
+  --aw-border: #30363d;
+  --aw-text-main: #f0f6fc;
+  --aw-text-muted: #8b949e;
+  --aw-navbar-bg: #161b22;
+  --aw-table-hover: #262c36;
 }
 
-::-webkit-scrollbar-thumb {
-  background: rgba(51, 65, 85, 0.7);
-  border-radius: 9999px;
+body {
+  background-color: var(--aw-bg);
+  color: var(--aw-text-main);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  transition: background-color 0.2s ease, color 0.2s ease;
 }
 
-::-webkit-scrollbar-thumb:hover {
-  background: rgba(99, 102, 241, 0.6);
+h1, h2, h3, h4, h5, h6, .font-varela, .aw-brand, .nav-link, button.aw-btn-primary {
+  font-family: 'Varela Round', -apple-system, BlinkMacSystemFont, sans-serif;
 }
 
+/* Authentic ActivityWatch Container Card */
+.aw-card {
+  background-color: var(--aw-card-bg);
+  border: 1px solid var(--aw-border);
+  border-radius: 8px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+  transition: background-color 0.2s ease, border-color 0.2s ease;
+}
+
+/* ActivityWatch Brand Button */
+.aw-btn-primary {
+  background-color: var(--aw-primary);
+  color: #ffffff;
+  font-family: 'Varela Round', sans-serif;
+  font-weight: 600;
+  border-radius: 6px;
+  transition: background-color 0.15s ease, transform 0.1s ease;
+}
+
+.aw-btn-primary:hover:not(:disabled) {
+  background-color: var(--aw-primary-hover);
+}
+
+.aw-btn-primary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* ActivityWatch Navigation */
+.aw-nav-item {
+  color: var(--aw-text-muted);
+  font-family: 'Varela Round', sans-serif;
+  font-size: 0.9rem;
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  height: 100%;
+  padding: 0 0.75rem;
+  border-bottom: 2px solid transparent;
+  transition: all 0.15s ease;
+}
+
+.aw-nav-item:hover {
+  color: var(--aw-text-main);
+}
+
+.aw-nav-item.active {
+  color: var(--aw-primary);
+  border-bottom-color: var(--aw-primary);
+}
+
+/* Category Badge Styling conforming to ActivityWatch Palette */
 .category-tag {
   display: inline-flex;
   align-items: center;
   padding: 0.2rem 0.55rem;
   border-radius: 9999px;
-  font-weight: 500;
+  font-weight: 600;
   font-size: 0.7rem;
   border-width: 1px;
 }
 
 .cat-dev {
-  background-color: rgba(99, 102, 241, 0.15);
-  color: #a5b4fc;
-  border-color: rgba(99, 102, 241, 0.35);
+  background-color: rgba(77, 186, 135, 0.15);
+  color: #2e8b57;
+  border-color: rgba(77, 186, 135, 0.4);
+}
+html.dark .cat-dev {
+  color: #56d397;
+  background-color: rgba(77, 186, 135, 0.2);
+  border-color: rgba(77, 186, 135, 0.4);
 }
 
 .cat-comm {
   background-color: rgba(56, 189, 248, 0.15);
-  color: #7dd3fc;
-  border-color: rgba(56, 189, 248, 0.35);
+  color: #0284c7;
+  border-color: rgba(56, 189, 248, 0.4);
+}
+html.dark .cat-comm {
+  color: #38bdf8;
+  background-color: rgba(56, 189, 248, 0.2);
 }
 
 .cat-social {
   background-color: rgba(244, 63, 94, 0.15);
-  color: #fda4af;
-  border-color: rgba(244, 63, 94, 0.35);
+  color: #e11d48;
+  border-color: rgba(244, 63, 94, 0.4);
+}
+html.dark .cat-social {
+  color: #fb7185;
+  background-color: rgba(244, 63, 94, 0.2);
 }
 
 .cat-media {
-  background-color: rgba(234, 179, 8, 0.15);
-  color: #fde047;
-  border-color: rgba(234, 179, 8, 0.35);
+  background-color: rgba(245, 158, 11, 0.15);
+  color: #d97706;
+  border-color: rgba(245, 158, 11, 0.4);
+}
+html.dark .cat-media {
+  color: #fbbf24;
+  background-color: rgba(245, 158, 11, 0.2);
 }
 
 .cat-prod {
-  background-color: rgba(16, 185, 129, 0.15);
-  color: #6ee7b7;
-  border-color: rgba(16, 185, 129, 0.35);
+  background-color: rgba(99, 102, 241, 0.15);
+  color: #4f46e5;
+  border-color: rgba(99, 102, 241, 0.4);
+}
+html.dark .cat-prod {
+  color: #818cf8;
+  background-color: rgba(99, 102, 241, 0.2);
 }
 
 .cat-sys {
-  background-color: rgba(148, 163, 184, 0.15);
+  background-color: rgba(148, 163, 184, 0.18);
+  color: #475569;
+  border-color: rgba(148, 163, 184, 0.4);
+}
+html.dark .cat-sys {
   color: #cbd5e1;
-  border-color: rgba(148, 163, 184, 0.35);
+  background-color: rgba(148, 163, 184, 0.2);
 }
 
 .cat-default {
   background-color: rgba(100, 116, 139, 0.15);
-  color: #94a3b8;
+  color: #64748b;
   border-color: rgba(100, 116, 139, 0.3);
+}
+html.dark .cat-default {
+  color: #94a3b8;
+  background-color: rgba(100, 116, 139, 0.2);
+}
+
+/* Embed Mode Styles (when embedded inside ActivityWatch or iframes) */
+body.is-embedded header {
+  display: none !important;
+}
+
+body.is-embedded main {
+  padding-top: 1rem !important;
+  padding-bottom: 1rem !important;
+}
+
+/* Custom Scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(150, 150, 150, 0.3);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--aw-primary);
 }

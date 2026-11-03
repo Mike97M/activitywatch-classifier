@@ -8,10 +8,43 @@ let chartMode = "main"; // 'main' or 'sub'
 let categoryChart = null;
 let lastEvents = [];
 
+// Initialize Theme immediately to prevent theme flashing
+initTheme();
+
 document.addEventListener("DOMContentLoaded", () => {
+  checkEmbedMode();
   initApp();
   setupEventListeners();
 });
+
+function initTheme() {
+  const saved = localStorage.getItem("aw-theme");
+  const prefersDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+  const isDark = saved ? saved === "dark" : (prefersDark !== false);
+  if (isDark) {
+    document.documentElement.classList.add("dark");
+  } else {
+    document.documentElement.classList.remove("dark");
+  }
+}
+
+function toggleTheme() {
+  const isDark = document.documentElement.classList.toggle("dark");
+  localStorage.setItem("aw-theme", isDark ? "dark" : "light");
+  updateChartTheme();
+}
+
+function checkEmbedMode() {
+  const params = new URLSearchParams(window.location.search);
+  const isEmbedded = params.get("embed") === "true" || window.self !== window.top;
+  if (isEmbedded) {
+    document.body.classList.add("is-embedded");
+  }
+  const embedInput = document.getElementById("embed-url-input");
+  if (embedInput) {
+    embedInput.value = `${window.location.origin}/?embed=true`;
+  }
+}
 
 async function initApp() {
   await fetchStatus();
@@ -28,9 +61,18 @@ async function fetchStatus() {
     const res = await fetch("/api/status");
     const data = await res.json();
 
-    // ActivityWatch indicator
+    // ActivityWatch indicator & direct links
     const awIndicator = document.getElementById("aw-indicator");
     const awText = document.getElementById("aw-text");
+    const serverUrl = data.activitywatch.server_url || "http://localhost:5600";
+
+    const navActivity = document.getElementById("nav-aw-activity");
+    const navTimeline = document.getElementById("nav-aw-timeline");
+    const navRaw = document.getElementById("nav-aw-raw");
+    if (navActivity) navActivity.href = `${serverUrl}/#/activity`;
+    if (navTimeline) navTimeline.href = `${serverUrl}/#/timeline`;
+    if (navRaw) navRaw.href = `${serverUrl}/#/raw-data`;
+
     if (data.activitywatch.connected) {
       awIndicator.className = "w-2 h-2 rounded-full bg-emerald-400";
       awText.textContent = `AW: ${data.activitywatch.info.hostname || "Connected"}`;
@@ -114,17 +156,17 @@ async function fetchBuckets() {
       const type = binfo.type || "unknown";
 
       const item = document.createElement("label");
-      item.className = "flex items-center justify-between p-2 rounded-lg bg-slate-900/80 hover:bg-slate-800/80 border border-slate-800 cursor-pointer transition";
+      item.className = "flex items-center justify-between p-2 rounded-lg bg-white dark:bg-slate-900/80 hover:bg-slate-100 dark:hover:bg-slate-800/80 border border-slate-200 dark:border-slate-800 cursor-pointer transition";
       item.innerHTML = `
         <div class="flex items-center space-x-3 overflow-hidden">
           <input type="checkbox" name="source-bucket" value="${bid}" ${isWindowOrWeb ? "checked" : ""} 
-            class="accent-indigo-500 rounded border-slate-700 bg-slate-950 focus:ring-0" />
+            class="accent-[#4DBA87] rounded border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 focus:ring-0" />
           <div class="truncate">
-            <div class="text-xs font-mono text-slate-200 truncate">${bid}</div>
-            <div class="text-[10px] text-slate-500">${client} &bull; ${type}</div>
+            <div class="text-xs font-mono text-slate-800 dark:text-slate-200 truncate">${bid}</div>
+            <div class="text-[10px] text-slate-500 dark:text-slate-400">${client} &bull; ${type}</div>
           </div>
         </div>
-        <span class="text-[10px] px-2 py-0.5 rounded font-mono bg-slate-800 text-slate-400 ml-2">
+        <span class="text-[10px] px-2 py-0.5 rounded font-mono bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 ml-2">
           ${isWindowOrWeb ? "Active Watcher" : "Bucket"}
         </span>
       `;
@@ -257,7 +299,7 @@ function renderEventsTable(events) {
   tbody.innerHTML = "";
   events.forEach((ev, idx) => {
     const tr = document.createElement("tr");
-    tr.className = "hover:bg-slate-900/60 transition group";
+    tr.className = "hover:bg-slate-50 dark:hover:bg-slate-900/60 transition group";
 
     const dateStr = ev.timestamp ? new Date(ev.timestamp).toLocaleTimeString() : "--:--";
     const durationStr = formatDuration(ev.duration);
@@ -265,50 +307,50 @@ function renderEventsTable(events) {
     const isGemma = (ev.classified_by || "").includes("gemma");
 
     tr.innerHTML = `
-      <td class="px-4 py-3 whitespace-nowrap text-slate-400 font-mono text-[11px]">
+      <td class="px-4 py-3 whitespace-nowrap text-slate-500 dark:text-slate-400 font-mono text-[11px]">
         <div>${dateStr}</div>
-        <div class="text-[10px] text-slate-500">${durationStr}</div>
+        <div class="text-[10px] text-slate-400 dark:text-slate-500">${durationStr}</div>
       </td>
-      <td class="px-4 py-3 font-semibold text-slate-200 whitespace-nowrap">
+      <td class="px-4 py-3 font-semibold text-slate-800 dark:text-slate-200 whitespace-nowrap">
         <div class="flex items-center space-x-1.5">
-          <i class="fa-solid fa-window-maximize text-slate-500 text-[10px]"></i>
+          <i class="fa-solid fa-window-maximize text-slate-400 dark:text-slate-500 text-[10px]"></i>
           <span>${escapeHtml(ev.app || "Browser/App")}</span>
         </div>
       </td>
-      <td class="px-4 py-3 max-w-xs truncate text-slate-300" title="${escapeHtml(ev.title || ev.url || "")}">
+      <td class="px-4 py-3 max-w-xs truncate text-slate-700 dark:text-slate-300" title="${escapeHtml(ev.title || ev.url || "")}">
         <div class="truncate font-medium">${escapeHtml(ev.title || "No Title")}</div>
-        ${ev.url ? `<div class="truncate text-[10px] text-indigo-400 font-mono">${escapeHtml(ev.url)}</div>` : ""}
+        ${ev.url ? `<div class="truncate text-[10px] text-teal-600 dark:text-teal-400 font-mono">${escapeHtml(ev.url)}</div>` : ""}
       </td>
       <td class="px-4 py-3 whitespace-nowrap">
         <div class="flex flex-col space-y-1">
           <span class="category-tag ${catClass}">${escapeHtml(ev.category)}</span>
-          <span class="text-[10px] text-slate-400 font-medium flex items-center pl-1">
-            <i class="fa-solid fa-angle-right text-[8px] text-slate-600 mr-1"></i>
+          <span class="text-[10px] text-slate-500 dark:text-slate-400 font-medium flex items-center pl-1">
+            <i class="fa-solid fa-angle-right text-[8px] text-slate-400 mr-1"></i>
             ${escapeHtml(ev.subcategory || "General")}
           </span>
         </div>
       </td>
       <td class="px-4 py-3 whitespace-nowrap font-mono">
         <div class="flex items-center space-x-2">
-          <span class="${ev.confidence >= 0.75 ? 'text-emerald-400' : 'text-amber-400'} font-bold">
+          <span class="${ev.confidence >= 0.75 ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'} font-bold">
             ${(ev.confidence * 100).toFixed(0)}%
           </span>
-          <div class="w-12 bg-slate-800 rounded-full h-1.5">
-            <div class="${ev.confidence >= 0.75 ? 'bg-emerald-400' : 'bg-amber-400'} h-1.5 rounded-full" 
+          <div class="w-12 bg-slate-200 dark:bg-slate-800 rounded-full h-1.5">
+            <div class="${ev.confidence >= 0.75 ? 'bg-emerald-500' : 'bg-amber-500'} h-1.5 rounded-full" 
               style="width: ${Math.min(100, ev.confidence * 100)}%"></div>
           </div>
         </div>
       </td>
       <td class="px-4 py-3 whitespace-nowrap">
         <span class="px-2 py-0.5 rounded text-[10px] font-mono ${
-          isGemma ? 'bg-purple-950 text-purple-300 border border-purple-800/60' : 'bg-emerald-950 text-emerald-300 border border-emerald-800/60'
+          isGemma ? 'bg-purple-100 dark:bg-purple-950 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800/60' : 'bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800/60'
         }">
           <i class="fa-solid ${isGemma ? 'fa-wand-magic-sparkles' : 'fa-bolt'} mr-1"></i>
-          ${isGemma ? 'Gemma E2B' : 'Fast Classifier'}
+          ${isGemma ? 'Gemma 4 E2B' : 'Fast Classifier'}
         </span>
       </td>
       <td class="px-4 py-3 whitespace-nowrap text-right">
-        <button onclick="openCorrectionDialog(${idx})" class="text-xs px-2.5 py-1 rounded bg-slate-800 hover:bg-indigo-600 text-slate-300 hover:text-white transition opacity-80 group-hover:opacity-100">
+        <button onclick="openCorrectionDialog(${idx})" class="text-xs px-2.5 py-1 rounded bg-slate-100 hover:bg-[#4DBA87] hover:text-white dark:bg-slate-800 dark:hover:bg-[#4DBA87] text-slate-700 dark:text-slate-300 transition font-medium">
           <i class="fa-solid fa-pencil mr-1"></i> Override
         </button>
       </td>
@@ -389,10 +431,14 @@ async function submitCorrection(featureText, correctCategory, correctSubcategory
 }
 
 // -------------------------------------------------------------
-// Chart.js Visualization
+// Chart.js Visualization (ActivityWatch Theme)
 // -------------------------------------------------------------
 function initChart() {
   const ctx = document.getElementById("categoryChart").getContext("2d");
+  const isDark = document.documentElement.classList.contains("dark");
+  const legendColor = isDark ? "#cbd5e1" : "#475569";
+  const borderColor = isDark ? "#21262d" : "#ffffff";
+
   categoryChart = new Chart(ctx, {
     type: "doughnut",
     data: {
@@ -401,16 +447,18 @@ function initChart() {
         {
           data: [],
           backgroundColor: [
-            "#6366f1",
-            "#38bdf8",
-            "#f43f5e",
-            "#eab308",
-            "#10b981",
-            "#a855f7",
-            "#94a3b8",
-            "#64748b",
+            "#4DBA87", // AW Primary Teal
+            "#35495E", // AW Dark Slate
+            "#38bdf8", // Sky
+            "#f43f5e", // Rose
+            "#eab308", // Amber
+            "#a855f7", // Purple
+            "#06b6d4", // Cyan
+            "#94a3b8", // Slate
+            "#10b981", // Emerald
+            "#f97316", // Orange
           ],
-          borderColor: "#0f172a",
+          borderColor: borderColor,
           borderWidth: 2,
         },
       ],
@@ -421,12 +469,25 @@ function initChart() {
       plugins: {
         legend: {
           position: "right",
-          labels: { color: "#cbd5e1", boxWidth: 12, font: { size: 11 } },
+          labels: { color: legendColor, boxWidth: 12, font: { size: 11, family: "'Varela Round', sans-serif" } },
         },
       },
       cutout: "68%",
     },
   });
+}
+
+function updateChartTheme() {
+  if (!categoryChart) return;
+  const isDark = document.documentElement.classList.contains("dark");
+  const legendColor = isDark ? "#cbd5e1" : "#475569";
+  const borderColor = isDark ? "#21262d" : "#ffffff";
+
+  categoryChart.options.plugins.legend.labels.color = legendColor;
+  if (categoryChart.data.datasets && categoryChart.data.datasets[0]) {
+    categoryChart.data.datasets[0].borderColor = borderColor;
+  }
+  categoryChart.update();
 }
 
 function refreshChart() {
@@ -462,20 +523,48 @@ function setupEventListeners() {
   document.getElementById("btn-refresh-buckets").addEventListener("click", fetchBuckets);
   document.getElementById("btn-refresh-events").addEventListener("click", () => loadTargetEvents());
 
+  // Theme Toggle Button
+  const btnTheme = document.getElementById("btn-theme-toggle");
+  if (btnTheme) {
+    btnTheme.addEventListener("click", toggleTheme);
+  }
+
+  // Direct Embed Modal
+  const embedModal = document.getElementById("embed-modal");
+  const btnOpenEmbed = document.getElementById("btn-open-embed-modal");
+  const btnCloseEmbed = document.getElementById("btn-close-embed");
+  const btnDismissEmbed = document.getElementById("btn-dismiss-embed");
+  const btnCopyEmbed = document.getElementById("btn-copy-embed-url");
+
+  if (btnOpenEmbed && embedModal) {
+    btnOpenEmbed.addEventListener("click", () => embedModal.classList.remove("hidden"));
+    btnCloseEmbed?.addEventListener("click", () => embedModal.classList.add("hidden"));
+    btnDismissEmbed?.addEventListener("click", () => embedModal.classList.add("hidden"));
+    btnCopyEmbed?.addEventListener("click", () => {
+      const input = document.getElementById("embed-url-input");
+      if (input) {
+        input.select();
+        navigator.clipboard.writeText(input.value);
+        btnCopyEmbed.textContent = "Copied!";
+        setTimeout(() => { btnCopyEmbed.textContent = "Copy"; }, 2000);
+      }
+    });
+  }
+
   // Chart Mode Toggle (Main Categories vs Subcategories)
   const btnMain = document.getElementById("btn-chart-main");
   const btnSub = document.getElementById("btn-chart-sub");
   if (btnMain && btnSub) {
     btnMain.addEventListener("click", () => {
       chartMode = "main";
-      btnMain.className = "px-2 py-0.5 rounded bg-indigo-600 text-white font-medium transition";
-      btnSub.className = "px-2 py-0.5 rounded text-slate-400 hover:text-white transition";
+      btnMain.className = "px-2 py-0.5 rounded bg-aw text-white font-semibold transition";
+      btnSub.className = "px-2 py-0.5 rounded text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition";
       refreshChart();
     });
     btnSub.addEventListener("click", () => {
       chartMode = "sub";
-      btnSub.className = "px-2 py-0.5 rounded bg-indigo-600 text-white font-medium transition";
-      btnMain.className = "px-2 py-0.5 rounded text-slate-400 hover:text-white transition";
+      btnSub.className = "px-2 py-0.5 rounded bg-aw text-white font-semibold transition";
+      btnMain.className = "px-2 py-0.5 rounded text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition";
       refreshChart();
     });
   }
