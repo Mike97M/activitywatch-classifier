@@ -70,10 +70,13 @@ async function fetchStatus() {
     const navTimeline = document.getElementById("nav-aw-timeline");
     const navRaw = document.getElementById("nav-aw-raw");
     const btnRawLink = document.getElementById("btn-aw-raw-data-link");
-    if (navActivity) navActivity.href = `${serverUrl}/#/activity`;
+    const btnActivityLink = document.getElementById("btn-aw-activity-tab-link");
+
+    if (navActivity) navActivity.href = `${serverUrl}/#/activity/classified/view/summary`;
     if (navTimeline) navTimeline.href = `${serverUrl}/#/timeline`;
     if (navRaw) navRaw.href = `${serverUrl}/#/raw-data`;
     if (btnRawLink) btnRawLink.href = `${serverUrl}/#/raw-data`;
+    if (btnActivityLink) btnActivityLink.href = `${serverUrl}/#/activity/classified/view/summary`;
 
     if (data.activitywatch.connected) {
       awIndicator.className = "w-2 h-2 rounded-full bg-emerald-400";
@@ -562,6 +565,34 @@ function setupEventListeners() {
       } else {
         afkBadge.textContent = "Disabled";
         afkBadge.className = "ml-2 px-1.5 py-0.5 text-[9px] rounded font-mono bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-300 border border-amber-300 dark:border-amber-800";
+      }
+    });
+  }
+
+  // Sync Categories to ActivityWatch Button
+  const btnSyncAwCats = document.getElementById("btn-sync-aw-categories");
+  if (btnSyncAwCats) {
+    btnSyncAwCats.addEventListener("click", async () => {
+      btnSyncAwCats.disabled = true;
+      const originalHtml = btnSyncAwCats.innerHTML;
+      btnSyncAwCats.innerHTML = `<i class="fa-solid fa-spinner fa-spin text-[9px] text-aw"></i><span>Syncing...</span>`;
+      try {
+        const res = await fetch("/api/sync-categories", { method: "POST" });
+        const data = await res.json();
+        if (data.status === "success") {
+          btnSyncAwCats.innerHTML = `<i class="fa-solid fa-check text-[9px] text-emerald-500"></i><span>Synced ${data.result.classes_count} Rules!</span>`;
+        } else {
+          alert("Failed to sync categories: " + (data.detail || "Unknown error"));
+          btnSyncAwCats.innerHTML = originalHtml;
+        }
+      } catch (err) {
+        alert("Failed to sync categories: " + err.message);
+        btnSyncAwCats.innerHTML = originalHtml;
+      } finally {
+        setTimeout(() => {
+          btnSyncAwCats.disabled = false;
+          btnSyncAwCats.innerHTML = originalHtml;
+        }, 3000);
       }
     });
   }

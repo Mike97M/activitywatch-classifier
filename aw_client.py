@@ -206,3 +206,75 @@ class AWClient:
         except Exception as e:
             logger.warning(f"Failed to delete bucket '{bucket_id}': {e}")
             return False
+
+    def get_setting(self, key: str) -> Any:
+        """Fetch a specific setting from ActivityWatch server."""
+        try:
+            resp = self._request("GET", f"/api/0/settings/{key}")
+            return resp.json()
+        except Exception as e:
+            logger.warning(f"Failed to fetch setting '{key}': {e}")
+            return None
+
+    def set_setting(self, key: str, value: Any) -> bool:
+        """Update a specific setting in ActivityWatch server."""
+        try:
+            resp = self._request("POST", f"/api/0/settings/{key}", json=value)
+            return resp.status_code in (200, 201)
+        except Exception as e:
+            logger.error(f"Failed to save setting '{key}' to ActivityWatch: {e}")
+            return False
+
+    def sync_classified_host_bucket(
+        self,
+        events: List[Dict[str, Any]],
+        host: str = "classified",
+    ) -> bool:
+        """Synchronize classified activities into ActivityWatch currentwindow & afkstatus buckets.
+        
+        This enables viewing the classified events directly under the 'Activity' tab
+        of ActivityWatch (e.g. http://localhost:5600/#/activity/classified/).
+        """
+        if not events:
+            return True
+
+        from datetime import timedelta
+        from afk_filter import parse_iso_timestamp, to_iso_timestamp
+
+        window_bucket = f"aw-watcher-window_{host}"
+        afk_bucket = f"aw-watcher-afk_{host}"
+
+        # 1. Ensure buckets exist
+        self.create_bucket(bucket_id=window_bucket, bucket_type="currentwindow", hostname=host)
+        self.create_bucket(bucket_id=afk_bucket, bucket_type="afkstatus", hostname=host)
+
+        # 2. Insert window events
+        window_events = []
+        for e in events:
+            d = dict(e.get("data", {}))
+            window_events.append({
+                "timestamp": e.get("timestamp"),
+                "duration": e.get("duration", 0.0),
+                "data": d,
+            })
+        self.insert_events(window_bucket, window_events)
+
+        # 3. Insert non-AFK span covering the events so ActivityWatch marks them active
+        try:
+            min_time = min(parse_iso_timestamp(e["timestamp"]) for e in events)
+            max_time = max(
+                parse_iso_timestamp(e["timestamp"]) + timedelta(seconds=float(e.get("duration", 0.0)))
+                for e in events
+            )
+            span_dur = max(60.0, (max_time - min_time).total_seconds() + 600.0)
+            afk_span = [{
+                "timestamp": to_iso_timestamp(min_time - timedelta(minutes=5)),
+                "duration": round(span_dur, 2),
+                "data": {"status": "not-afk"},
+            }]
+            self.insert_events(afk_bucket, afk_span)
+        except Exception as e:
+            logger.warning(f"Failed to insert AFK active span for host '{host}': {e}")
+
+        logger.info(f"Synchronized {len(window_events)} events to Activity tab host '{host}'")
+        return True

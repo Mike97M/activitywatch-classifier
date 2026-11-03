@@ -250,14 +250,18 @@
             </div>
             <div class="text-xs text-slate-500 dark:text-slate-400 mt-0.5" id="target-bucket-info">Ready to verify live events</div>
           </div>
-          <div class="flex items-center space-x-2">
+          <div class="flex flex-wrap items-center gap-2">
             <button id="btn-inspect-target" class="px-3 py-1.5 text-xs bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-slate-700 rounded-lg transition font-medium flex items-center space-x-1.5">
               <i class="fa-solid fa-code text-[11px] text-slate-400"></i>
               <span>Inspect JSON</span>
             </button>
-            <a id="btn-aw-raw-data-link" href="#" target="_blank" class="px-3 py-1.5 text-xs aw-btn-primary rounded-lg transition font-medium flex items-center space-x-1.5">
-              <i class="fa-solid fa-arrow-up-right-from-square text-[10px]"></i>
-              <span>Open in ActivityWatch</span>
+            <a id="btn-aw-raw-data-link" href="#" target="_blank" class="px-3 py-1.5 text-xs bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-slate-700 rounded-lg transition font-medium flex items-center space-x-1.5">
+              <i class="fa-solid fa-database text-[11px] text-slate-400"></i>
+              <span>Raw Data</span>
+            </a>
+            <a id="btn-aw-activity-tab-link" href="#" target="_blank" class="px-3 py-1.5 text-xs aw-btn-primary rounded-lg transition font-medium flex items-center space-x-1.5">
+              <i class="fa-solid fa-chart-line text-[10px]"></i>
+              <span>View in Activity Tab</span>
             </a>
           </div>
         </div>
@@ -271,6 +275,10 @@
               <i class="fa-solid fa-chart-pie text-aw mr-2"></i> Category Analytics
             </h2>
             <div class="flex items-center space-x-2">
+              <button id="btn-sync-aw-categories" title="Sync categories to ActivityWatch Activity Tab" class="px-2 py-0.5 rounded text-[10px] bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 border border-slate-300 dark:border-slate-700 font-medium transition flex items-center space-x-1">
+                <i class="fa-solid fa-arrows-rotate text-[9px] text-aw"></i>
+                <span>Sync to Activity Tab</span>
+              </button>
               <!-- Dual-Mode Toggle: Main vs Subcategories -->
               <div class="flex items-center bg-slate-100 dark:bg-slate-900 p-0.5 rounded-lg border border-slate-200 dark:border-slate-800 text-[10px]">
                 <button id="btn-chart-main" class="px-2 py-0.5 rounded bg-aw text-white font-semibold transition">Main</button>

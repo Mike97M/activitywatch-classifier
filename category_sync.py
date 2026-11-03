@@ -1,0 +1,173 @@
+"""Synchronize Classifier Taxonomy and Learned Patterns into ActivityWatch's Native Categorization Settings."""
+
+import logging
+import re
+from typing import Any, Dict, List, Optional
+from config import DEFAULT_TAXONOMY
+
+logger = logging.getLogger("category_sync")
+
+CATEGORY_COLORS: Dict[str, str] = {
+    "Development": "#4DBA87",          # AW Primary Teal
+    "Communication": "#38bdf8",        # Sky Blue
+    "Browsing & Research": "#35495E",  # AW Navy
+    "Social Media": "#f43f5e",         # Rose
+    "Media & Entertainment": "#eab308",# Amber
+    "Productivity & Planning": "#a855f7", # Purple
+    "System & Admin": "#64748b",       # Slate
+    "Uncategorized": "#94a3b8",        # Muted Gray
+}
+
+# Baseline regex keywords for each subcategory matching DEFAULT_TAXONOMY
+SUBCATEGORY_SEEDS: Dict[str, Dict[str, str]] = {
+    "Development": {
+        "Coding & IDE": r"\b(nvim|neovim|vim|gvim|code|vscode|vscodium|zed|sublime|sublime_text|pycharm|intellij|webstorm|clion|emacs|helix)\b",
+        "DevOps & Terminal": r"\b(foot|kitty|alacritty|ptyxis|gnome-terminal|konsole|xterm|bash|zsh|fish|tmux|screen|docker|podman|kubectl|ssh|ansible|terraform)\b",
+        "Git & Code Review": r"\b(git|github|gitlab|bitbucket|lazygit|gitkraken|sourcetree|pull request|commit)\b",
+        "Documentation & API": r"\b(docs|api|swagger|postman|insomnia|devdocs|manpage)\b",
+        "Debugging & Testing": r"\b(gdb|valgrind|cargo test|pytest|unittest|profiler|debugger|inspect)\b",
+    },
+    "Communication": {
+        "Team Chat": r"\b(slack|discord|element|mattermost|zulip|teams|microsoft teams)\b",
+        "Email": r"\b(thunderbird|evolution|gmail|proton|protonmail|kmail|mutt|neomutt|alpine|outlook)\b",
+        "Calls & Meetings": r"\b(zoom|meet|google meet|webex|jitsi|bluejeans|call|huddle)\b",
+    },
+    "Browsing & Research": {
+        "Search & Exploration": r"\b(google search|duckduckgo|bing search|brave search|kagi|searx|wikipedia|search)\b",
+        "Technical Articles & Papers": r"\b(stackoverflow|stackexchange|github\.com|gitlab\.com|readthedocs|developer\.mozilla|python\.org|pkg\.go\.dev|crates\.io|huggingface|arxiv)\b",
+        "Shopping & E-Commerce": r"\b(amazon|ebay|aliexpress|shopify|cart|checkout)\b",
+    },
+    "Productivity & Planning": {
+        "Notes & Knowledge Base": r"\b(obsidian|notion|confluence|evernote|logseq|joplin|onenote|wiki)\b",
+        "Task & Project Management": r"\b(jira|trello|asana|linear|todoist|ticktick|omnifocus|kanban)\b",
+        "Docs & Spreadsheets": r"\b(libreoffice|google docs|google sheets|calibre|evince|okular|excel|word|calc)\b",
+    },
+    "Media & Entertainment": {
+        "Video & Streaming": r"\b(youtube|twitch|netflix|plex|jellyfin|vlc|mpv|kodi|prime video|disney\+|bilibili)\b",
+        "Music & Audio": r"\b(spotify|youtube music|soundcloud|tidal|deezer|rhythmbox|audacious|podcast)\b",
+        "Gaming": r"\b(steam|lutris|heroic|retroarch|minecraft|steamwebhelper|game)\b",
+    },
+    "Social Media": {
+        "X / Twitter": r"\b(home / x|twitter|x\.com)\b",
+        "Reddit & Communities": r"\b(reddit|lemmy|hacker news|lobste\.rs|forum)\b",
+        "LinkedIn & Professional": r"\b(linkedin)\b",
+    },
+    "System & Admin": {
+        "OS & Desktop Settings": r"\b(gnome-control-center|systemsettings|pavucontrol|gparted|settings|control center)\b",
+        "Hardware & System Monitor": r"\b(htop|btop|top|system-monitor|sensors|nvtop)\b",
+        "Package Management": r"\b(nautilus|dolphin|thunar|mediawriter|dnf|rpm|zypper|apt|pacman|flatpak)\b",
+    },
+    "Uncategorized": {
+        "General Activity": r"",
+    },
+}
+
+
+def build_activitywatch_classes(
+    taxonomy: Optional[Dict[str, List[str]]] = None,
+    training_samples: Optional[List[Dict[str, Any]]] = None,
+) -> List[Dict[str, Any]]:
+    """Build ActivityWatch-compatible `classes` list for native Category Tree and Sunburst."""
+    tax = taxonomy or DEFAULT_TAXONOMY
+    samples = training_samples or []
+
+    # Aggregate discovered keywords per (category, subcategory) from training samples
+    discovered_keywords: Dict[str, Dict[str, set]] = {}
+    for sample in samples:
+        cat = sample.get("category")
+        sub = sample.get("subcategory") or "General"
+        feat = sample.get("feature_text", "")
+        if not cat:
+            continue
+        discovered_keywords.setdefault(cat, {}).setdefault(sub, set())
+        
+        # Extract apps and domains
+        app_match = re.search(r"app:([^\s]+)", feat)
+        if app_match:
+            app_val = app_match.group(1).strip()
+            if len(app_val) > 2 and app_val not in ("unknown", "none"):
+                discovered_keywords[cat][sub].add(re.escape(app_val))
+
+    classes: List[Dict[str, Any]] = []
+    class_id = 1
+
+    for cat, subcategories in tax.items():
+        color = CATEGORY_COLORS.get(cat, "#4DBA87")
+        cat_regex_parts = []
+
+        # 1. Add subcategory classes first (deepest matches have priority in ActivityWatch)
+        for sub in subcategories:
+            sub_id = class_id
+            class_id += 1
+
+            # Combine baseline regex with discovered sample keywords
+            patterns = []
+            seed = SUBCATEGORY_SEEDS.get(cat, {}).get(sub)
+            if seed:
+                patterns.append(seed)
+
+            extra_keywords = discovered_keywords.get(cat, {}).get(sub, set())
+            if extra_keywords:
+                patterns.append(r"\b(" + "|".join(sorted(extra_keywords)) + r")\b")
+
+            if patterns:
+                combined_regex = "|".join(patterns)
+                classes.append({
+                    "id": sub_id,
+                    "name": [cat, sub],
+                    "rule": {
+                        "type": "regex",
+                        "regex": combined_regex,
+                        "ignore_case": True,
+                    },
+                    "data": {"color": color},
+                })
+                cat_regex_parts.append(combined_regex)
+            else:
+                classes.append({
+                    "id": sub_id,
+                    "name": [cat, sub],
+                    "rule": {"type": "none"},
+                    "data": {"color": color},
+                })
+
+        # 2. Add root category class
+        root_id = class_id
+        class_id += 1
+        root_regex = "|".join(cat_regex_parts) if cat_regex_parts else ""
+        classes.append({
+            "id": root_id,
+            "name": [cat],
+            "rule": {
+                "type": "regex" if root_regex else "none",
+                "regex": root_regex,
+                "ignore_case": True,
+            } if root_regex else {"type": "none"},
+            "data": {"color": color},
+        })
+
+    # 3. Fallback class for Uncategorized
+    classes.append({
+        "id": 9999,
+        "name": ["Uncategorized"],
+        "rule": {"type": "none"},
+        "data": {"color": "#BDBDBD"},
+    })
+
+    return classes
+
+
+def sync_taxonomy_to_activitywatch(aw_client, classifier=None) -> Dict[str, Any]:
+    """Compile classifier taxonomy and push into ActivityWatch `/api/0/settings/classes`."""
+    samples = classifier.training_samples if classifier else []
+    taxonomy = classifier.taxonomy if classifier else DEFAULT_TAXONOMY
+
+    new_classes = build_activitywatch_classes(taxonomy, samples)
+    
+    # Send to ActivityWatch
+    success = aw_client.set_setting("classes", new_classes)
+    return {
+        "success": success,
+        "classes_count": len(new_classes),
+        "categories": list(taxonomy.keys()),
+    }

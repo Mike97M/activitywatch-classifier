@@ -223,6 +223,19 @@ class ClassificationPipeline:
             except Exception as e:
                 logger.error(f"Failed inserting into target bucket {target_bucket_id}: {e}")
 
+            # Synchronize to ActivityWatch host 'classified' so events appear in the Activity tab
+            try:
+                self.aw_client.sync_classified_host_bucket(classified_events_to_insert, host="classified")
+            except Exception as e:
+                logger.warning(f"Failed to sync classified activities to Activity tab host: {e}")
+
+            # Synchronize taxonomy & rules into ActivityWatch settings so Activity tab categorizes them
+            try:
+                from category_sync import sync_taxonomy_to_activitywatch
+                sync_taxonomy_to_activitywatch(self.aw_client, self.classifier)
+            except Exception as e:
+                logger.warning(f"Failed to auto-sync category rules to ActivityWatch: {e}")
+
         stats = {
             "target_bucket_id": target_bucket_id,
             "source_buckets": source_bucket_ids,

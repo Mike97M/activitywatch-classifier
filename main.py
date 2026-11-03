@@ -111,6 +111,12 @@ def main():
         help="Gemma 4 E2B variant: 'standard' (Q4_K_M ~3.1 GB) or 'light' (Q3_K_M ~2.5 GB)",
     )
 
+    # Sync categories command
+    sync_parser = subparsers.add_parser(
+        "sync-categories",
+        help="Synchronize classifier taxonomy and learned rules into ActivityWatch native settings",
+    )
+
     args = parser.parse_args()
 
     # Default to serve if no command provided
@@ -134,6 +140,20 @@ def main():
         print(f"Target directory: {MODELS_DIR}")
         path = download_gemma_weights(repo_id=repo, filename=filename)
         print(f"\nDownload complete! Model ready for local in-process inference at:\n  {path}")
+        return
+
+    if args.command == "sync-categories":
+        from category_sync import sync_taxonomy_to_activitywatch
+        client = AWClient()
+        clf = FastClassifier()
+        print("Synchronizing classifier categories into ActivityWatch settings (/api/0/settings/classes)...")
+        res = sync_taxonomy_to_activitywatch(client, clf)
+        if res.get("success"):
+            print(f"Success! Synchronized {res['classes_count']} category rules into ActivityWatch.")
+            print(f"Categories: {', '.join(res['categories'])}")
+            print("\nYou can now open http://localhost:5600/#/activity to view the category tree and sunburst!")
+        else:
+            print("Failed to sync categories to ActivityWatch.")
         return
 
     if args.command == "status":

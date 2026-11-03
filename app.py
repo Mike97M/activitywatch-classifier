@@ -221,6 +221,18 @@ def correct_event(req: EventCorrectionRequest) -> Dict[str, Any]:
     return {"status": "trained", "classifier_stats": classifier.get_stats()}
 
 
+@app.post("/api/sync-categories")
+def sync_categories() -> Dict[str, Any]:
+    """Sync classifier taxonomy and learned patterns into ActivityWatch native categorization settings."""
+    try:
+        from category_sync import sync_taxonomy_to_activitywatch
+        res = sync_taxonomy_to_activitywatch(aw_client, classifier)
+        return {"status": "success", "result": res}
+    except Exception as e:
+        logger.exception("Failed to sync categories to ActivityWatch")
+        raise HTTPException(status_code=500, detail=f"Category sync failed: {e}")
+
+
 @app.get("/api/events/target")
 def get_target_events(
     bucket_id: str = DEFAULT_TARGET_BUCKET_ID, limit: int = 50
