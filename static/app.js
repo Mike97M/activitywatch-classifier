@@ -69,9 +69,11 @@ async function fetchStatus() {
     const navActivity = document.getElementById("nav-aw-activity");
     const navTimeline = document.getElementById("nav-aw-timeline");
     const navRaw = document.getElementById("nav-aw-raw");
+    const btnRawLink = document.getElementById("btn-aw-raw-data-link");
     if (navActivity) navActivity.href = `${serverUrl}/#/activity`;
     if (navTimeline) navTimeline.href = `${serverUrl}/#/timeline`;
     if (navRaw) navRaw.href = `${serverUrl}/#/raw-data`;
+    if (btnRawLink) btnRawLink.href = `${serverUrl}/#/raw-data`;
 
     if (data.activitywatch.connected) {
       awIndicator.className = "w-2 h-2 rounded-full bg-emerald-400";

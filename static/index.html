@@ -242,15 +242,24 @@
         </div>
 
         <!-- Target Bucket Verification Card -->
-        <div class="aw-card p-4 flex items-center justify-between">
+        <div class="aw-card p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
-            <div class="text-xs font-bold font-varela">Target Bucket in ActivityWatch</div>
+            <div class="text-xs font-bold font-varela flex items-center">
+              <span>Target Bucket in ActivityWatch</span>
+              <span class="ml-2 px-1.5 py-0.2 rounded font-mono text-[9px] bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800">Live</span>
+            </div>
             <div class="text-xs text-slate-500 dark:text-slate-400 mt-0.5" id="target-bucket-info">Ready to verify live events</div>
           </div>
-          <button id="btn-inspect-target" class="px-3 py-1.5 text-xs bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-slate-700 rounded-lg transition font-medium flex items-center space-x-1.5">
-            <i class="fa-solid fa-code text-[11px] text-slate-400"></i>
-            <span>Inspect Raw Target</span>
-          </button>
+          <div class="flex items-center space-x-2">
+            <button id="btn-inspect-target" class="px-3 py-1.5 text-xs bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-slate-700 rounded-lg transition font-medium flex items-center space-x-1.5">
+              <i class="fa-solid fa-code text-[11px] text-slate-400"></i>
+              <span>Inspect JSON</span>
+            </button>
+            <a id="btn-aw-raw-data-link" href="#" target="_blank" class="px-3 py-1.5 text-xs aw-btn-primary rounded-lg transition font-medium flex items-center space-x-1.5">
+              <i class="fa-solid fa-arrow-up-right-from-square text-[10px]"></i>
+              <span>Open in ActivityWatch</span>
+            </a>
+          </div>
         </div>
       </section>
 

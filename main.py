@@ -84,6 +84,22 @@ def main():
     # Status command
     status_parser = subparsers.add_parser("status", help="Show ActivityWatch & Classifier status")
 
+    # View bucket command
+    view_parser = subparsers.add_parser("view", help="View categorized activities and taxonomy distribution")
+    view_parser.add_argument(
+        "--target",
+        "-t",
+        default=DEFAULT_TARGET_BUCKET_ID,
+        help="Target bucket ID to view (default: aw-classifier-categorized)",
+    )
+    view_parser.add_argument(
+        "--limit",
+        "-l",
+        type=int,
+        default=25,
+        help="Number of recent events to display (default: 25)",
+    )
+
     # Download Gemma command
     dl_parser = subparsers.add_parser(
         "download-gemma", help="Download Gemma 4 E2B GGUF weights directly from Hugging Face"
@@ -186,6 +202,65 @@ def main():
         print(f"  Fast Classifier calls:   {results['fast_classifier_calls']}")
         print(f"  Gemma Oracle calls:      {results['gemma_oracle_calls']}")
         print(f"  Category Distribution:   {results['category_distribution']}")
+        return
+
+    if args.command == "view":
+        client = AWClient()
+        target = args.target
+        limit = args.limit
+        print(f"\n========================================================")
+        print(f" ActivityWatch Target Bucket Viewer")
+        print(f" Bucket: {target} | Server: {client.base_url}")
+        print(f"========================================================\n")
+        try:
+            binfo = client.get_bucket(target)
+            if not binfo:
+                print(f"Bucket '{target}' does not exist in ActivityWatch yet.")
+                print(f"Run the classifier pipeline first: uv run python main.py run -s <source-bucket>")
+                return
+
+            events = client.get_events(target, limit=limit)
+            if not events:
+                print(f"Bucket '{target}' exists but contains no categorized events.")
+                return
+
+            # Compute category and subcategory breakdown
+            cat_counts = {}
+            subcat_counts = {}
+            for ev in events:
+                data = ev.get("data", {})
+                cat = data.get("category", "Uncategorized")
+                sub = data.get("subcategory", "General")
+                full = data.get("full_category", f"{cat} > {sub}")
+                cat_counts[cat] = cat_counts.get(cat, 0) + 1
+                subcat_counts[full] = subcat_counts.get(full, 0) + 1
+
+            print(f"Category Distribution ({len(events)} loaded events):")
+            for cat, cnt in sorted(cat_counts.items(), key=lambda x: x[1], reverse=True):
+                pct = (cnt / len(events)) * 100
+                bar = "█" * int(pct // 5)
+                print(f"  {cat:24} {cnt:3d} ({pct:5.1f}%) {bar}")
+
+            print(f"\nSubcategory Breakdown:")
+            for full, cnt in sorted(subcat_counts.items(), key=lambda x: x[1], reverse=True):
+                print(f"  • {full:40} : {cnt} events")
+
+            print(f"\nRecent Categorized Activities (Latest {min(len(events), limit)}):")
+            print(f"{'Time':8} | {'App':15} | {'Category':20} | {'Subcategory':20} | {'Conf':5} | {'Classified By'}")
+            print("-" * 92)
+            for ev in events[:limit]:
+                ts = (ev.get("timestamp") or "")[11:19]
+                data = ev.get("data", {})
+                app = (data.get("app") or "Unknown")[:15]
+                cat = (data.get("category") or "Uncategorized")[:20]
+                sub = (data.get("subcategory") or "General")[:20]
+                conf = f"{data.get('confidence', 0.0):.2f}"
+                by = data.get("classified_by", "")[:20]
+                print(f"{ts:8} | {app:15} | {cat:20} | {sub:20} | {conf:5} | {by}")
+            print()
+        except Exception as e:
+            print(f"Error inspecting target bucket '{target}': {e}")
+        return
 
 
 if __name__ == "__main__":
