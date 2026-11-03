@@ -1,7 +1,7 @@
 """ActivityWatch Client with endpoint auto-detection and non-destructive operations."""
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 import httpx
 
 from config import (
@@ -66,6 +66,63 @@ class AWClient:
         """List all buckets in ActivityWatch."""
         resp = self._request("GET", "/api/0/buckets")
         return resp.json()
+
+    def list_afk_buckets(self) -> Dict[str, Dict[str, Any]]:
+        """Return all buckets associated with AFK status tracking."""
+        buckets = self.list_buckets()
+        afk_buckets = {}
+        for bid, binfo in buckets.items():
+            btype = binfo.get("type", "")
+            if btype == "afkstatus" or "afk" in bid.lower():
+                afk_buckets[bid] = binfo
+        return afk_buckets
+
+    def find_afk_bucket_for_source(self, source_bucket_id: str) -> Optional[str]:
+        """Auto-detect the matching AFK bucket for a given source bucket.
+
+        Matches by hostname attribute, bucket name suffix (e.g. '_fedora'),
+        or falls back to the solitary AFK bucket if only one is registered.
+        """
+        all_buckets = self.list_buckets()
+        source_info = all_buckets.get(source_bucket_id, {})
+        source_host = source_info.get("hostname", "")
+
+        # Extract suffix if present (e.g. 'aw-watcher-window_fedora' -> 'fedora')
+        source_suffix = source_bucket_id.split("_")[-1] if "_" in source_bucket_id else ""
+
+        afk_candidates: List[Tuple[str, Dict[str, Any]]] = []
+        for bid, binfo in all_buckets.items():
+            if binfo.get("type") == "afkstatus" or "afk" in bid.lower():
+                afk_candidates.append((bid, binfo))
+
+        if not afk_candidates:
+            logger.info("No AFK buckets found on ActivityWatch server.")
+            return None
+
+        # Priority 1: Match by exact hostname
+        if source_host:
+            for bid, binfo in afk_candidates:
+                if binfo.get("hostname") == source_host:
+                    return bid
+
+        # Priority 2: Match by suffix (e.g. both end in '_fedora')
+        if source_suffix:
+            for bid, binfo in afk_candidates:
+                if bid.endswith(f"_{source_suffix}"):
+                    return bid
+
+        # Priority 3: Exact name replacement
+        candidate_name = source_bucket_id.replace("window", "afk").replace("web", "afk")
+        for bid, _ in afk_candidates:
+            if bid == candidate_name:
+                return bid
+
+        # Priority 4: If only 1 AFK bucket exists on server, use it
+        if len(afk_candidates) == 1:
+            return afk_candidates[0][0]
+
+        # Priority 5: Return first candidate as fallback
+        return afk_candidates[0][0]
 
     def get_bucket(self, bucket_id: str) -> Optional[Dict[str, Any]]:
         """Get details for a single bucket."""

@@ -73,6 +73,8 @@ class RunPipelineRequest(BaseModel):
     target_bucket_id: str = DEFAULT_TARGET_BUCKET_ID
     limit_per_bucket: int = 150
     confidence_threshold: Optional[float] = None
+    filter_afk: bool = True
+    afk_bucket_id: Optional[str] = None
 
 
 class EventCorrectionRequest(BaseModel):
@@ -141,10 +143,11 @@ def download_gemma_api(req: DownloadGemmaRequest) -> Dict[str, Any]:
 
 @app.get("/api/buckets")
 def get_buckets() -> Dict[str, Any]:
-    """List all ActivityWatch buckets."""
+    """List all ActivityWatch buckets and detected AFK buckets."""
     try:
         buckets = aw_client.list_buckets()
-        return {"buckets": buckets}
+        afk_buckets = aw_client.list_afk_buckets()
+        return {"buckets": buckets, "afk_buckets": afk_buckets}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch buckets: {e}")
 
@@ -193,6 +196,8 @@ def run_pipeline(req: RunPipelineRequest) -> Dict[str, Any]:
             target_bucket_id=req.target_bucket_id.strip() or DEFAULT_TARGET_BUCKET_ID,
             limit_per_bucket=req.limit_per_bucket,
             confidence_threshold=req.confidence_threshold,
+            filter_afk=req.filter_afk,
+            afk_bucket_id=req.afk_bucket_id,
         )
         return {"status": "completed", "results": stats}
     except Exception as e:

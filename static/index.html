@@ -199,6 +199,28 @@
             </div>
           </div>
 
+          <!-- AFK Filter Setting (Account for AFK bucket) -->
+          <div class="flex items-center justify-between p-3 rounded-lg bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800">
+            <div class="flex items-center space-x-2.5">
+              <div class="w-7 h-7 rounded-lg bg-emerald-50 dark:bg-emerald-950/60 text-aw flex items-center justify-center">
+                <i class="fa-solid fa-person-walking-arrow-right text-xs"></i>
+              </div>
+              <div>
+                <div class="text-xs font-bold text-slate-800 dark:text-slate-100 flex items-center">
+                  <span>AFK Guard (Filter Idle Time)</span>
+                  <span id="afk-guard-badge" class="ml-2 px-1.5 py-0.5 text-[9px] rounded font-mono bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800">Enabled</span>
+                </div>
+                <div class="text-[11px] text-slate-500 dark:text-slate-400" id="afk-guard-details">
+                  Accounts for AFK bucket; only classifies activities when user wasn't AFK.
+                </div>
+              </div>
+            </div>
+            <label class="relative inline-flex items-center cursor-pointer">
+              <input type="checkbox" id="toggle-filter-afk" checked class="sr-only peer" />
+              <div class="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-aw"></div>
+            </label>
+          </div>
+
           <!-- Action Button -->
           <div class="space-y-3 pt-1">
             <button id="btn-run-pipeline" class="w-full aw-btn-primary py-2.5 px-4 shadow-sm flex items-center justify-center space-x-2">

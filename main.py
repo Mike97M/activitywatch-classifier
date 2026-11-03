@@ -69,6 +69,17 @@ def main():
         default=None,
         help="Explicit path to a local Gemma GGUF file",
     )
+    run_parser.add_argument(
+        "--filter-afk",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Filter out AFK periods and only consider activities when user was active (default: True)",
+    )
+    run_parser.add_argument(
+        "--afk-bucket",
+        default=None,
+        help="Explicit AFK bucket ID to filter against (auto-detected by default)",
+    )
 
     # Status command
     status_parser = subparsers.add_parser("status", help="Show ActivityWatch & Classifier status")
@@ -149,6 +160,9 @@ def main():
         print(f"  Target Bucket:  {args.target}")
         print(f"  Event Limit:    {args.limit}")
         print(f"  Confidence Cut: {args.threshold}")
+        print(f"  AFK Guard:      {'Enabled' if args.filter_afk else 'Disabled'}")
+        if args.afk_bucket:
+            print(f"  AFK Bucket:     {args.afk_bucket}")
         print(f"  Gemma Backend:  {args.backend}\n")
 
         oracle = GemmaOracle(backend=args.backend, local_gguf_path=args.model_path)
@@ -158,14 +172,20 @@ def main():
             target_bucket_id=args.target,
             limit_per_bucket=args.limit,
             confidence_threshold=args.threshold,
+            filter_afk=args.filter_afk,
+            afk_bucket_id=args.afk_bucket,
         )
 
         print("\nPipeline Run Completed!")
-        print(f"  Total Processed: {results['total_events_processed']}")
+        if results.get("afk_filtering_enabled"):
+            print(f"  AFK Buckets Used:        {', '.join(results.get('afk_buckets_used', [])) or 'None'}")
+            print(f"  Raw Events Fetched:      {results.get('total_raw_events_fetched', 0)}")
+            print(f"  Idle/AFK Events Dropped: {results.get('afk_events_filtered_out', 0)}")
+        print(f"  Active Events Processed: {results['total_events_processed']}")
         print(f"  Events Saved to '{args.target}': {results['events_saved_to_new_bucket']}")
-        print(f"  Fast Classifier calls: {results['fast_classifier_calls']}")
-        print(f"  Gemma Oracle calls:    {results['gemma_oracle_calls']}")
-        print(f"  Category Distribution: {results['category_distribution']}")
+        print(f"  Fast Classifier calls:   {results['fast_classifier_calls']}")
+        print(f"  Gemma Oracle calls:      {results['gemma_oracle_calls']}")
+        print(f"  Category Distribution:   {results['category_distribution']}")
 
 
 if __name__ == "__main__":

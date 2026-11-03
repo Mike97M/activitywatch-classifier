@@ -139,6 +139,17 @@ async function fetchBuckets() {
     const res = await fetch("/api/buckets");
     const data = await res.json();
     const buckets = data.buckets || {};
+    const afkBuckets = data.afk_buckets || {};
+
+    const afkDetails = document.getElementById("afk-guard-details");
+    if (afkDetails) {
+      const afkNames = Object.keys(afkBuckets);
+      if (afkNames.length > 0) {
+        afkDetails.textContent = `Active guard connected to: ${afkNames.join(", ")}`;
+      } else {
+        afkDetails.textContent = "Accounts for AFK bucket; only classifies activities when user wasn't AFK.";
+      }
+    }
 
     if (Object.keys(buckets).length === 0) {
       container.innerHTML = `<div class="text-xs text-slate-500 text-center py-4">No buckets found in ActivityWatch.</div>`;
@@ -186,6 +197,9 @@ async function runPipeline() {
   const targetBucketId = document.getElementById("target-bucket-id").value.trim() || "aw-classifier-categorized";
   const limit = parseInt(document.getElementById("limit-per-bucket").value, 10);
   const threshold = parseFloat(document.getElementById("confidence-threshold-slider").value);
+  const filterAfk = document.getElementById("toggle-filter-afk")
+    ? document.getElementById("toggle-filter-afk").checked
+    : true;
 
   if (sourceBucketIds.length === 0) {
     alert("Please select at least one source bucket to clone activities from.");
@@ -213,6 +227,7 @@ async function runPipeline() {
         target_bucket_id: targetBucketId,
         limit_per_bucket: limit,
         confidence_threshold: threshold,
+        filter_afk: filterAfk,
       }),
     });
 
@@ -231,6 +246,11 @@ async function runPipeline() {
     document.getElementById("stat-fast-calls").textContent = results.fast_classifier_calls || 0;
     document.getElementById("stat-gemma-calls").textContent = results.gemma_oracle_calls || 0;
     document.getElementById("stat-training-samples").textContent = results.classifier_stats?.total_training_samples || 0;
+
+    if (results.afk_filtering_enabled && results.afk_events_filtered_out > 0) {
+      document.getElementById("target-bucket-info").textContent = 
+        `${results.total_events_processed} active events categorized (filtered out ${results.afk_events_filtered_out} idle/AFK events)`;
+    }
 
     // Update chart
     currentCategoryDist = results.category_distribution || {};
@@ -527,6 +547,21 @@ function setupEventListeners() {
   const btnTheme = document.getElementById("btn-theme-toggle");
   if (btnTheme) {
     btnTheme.addEventListener("click", toggleTheme);
+  }
+
+  // AFK Guard Toggle
+  const toggleAfk = document.getElementById("toggle-filter-afk");
+  const afkBadge = document.getElementById("afk-guard-badge");
+  if (toggleAfk && afkBadge) {
+    toggleAfk.addEventListener("change", (e) => {
+      if (e.target.checked) {
+        afkBadge.textContent = "Enabled";
+        afkBadge.className = "ml-2 px-1.5 py-0.5 text-[9px] rounded font-mono bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800";
+      } else {
+        afkBadge.textContent = "Disabled";
+        afkBadge.className = "ml-2 px-1.5 py-0.5 text-[9px] rounded font-mono bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-300 border border-amber-300 dark:border-amber-800";
+      }
+    });
   }
 
   // Direct Embed Modal

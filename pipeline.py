@@ -1,7 +1,9 @@
-"""Pipeline coordinating ActivityWatch buckets, FastClassifier, and Gemma Oracle with hierarchical subcategories."""
+"""Pipeline coordinating ActivityWatch buckets, AFK filtering, FastClassifier, and Gemma Oracle with hierarchical subcategories."""
 
+from datetime import timedelta
 import logging
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Set
+from afk_filter import filter_events_by_afk, parse_iso_timestamp, to_iso_timestamp
 from anonymizer import anonymizer
 from aw_client import AWClient
 from classifier import FastClassifier
@@ -32,9 +34,11 @@ class ClassificationPipeline:
         target_bucket_id: str = DEFAULT_TARGET_BUCKET_ID,
         limit_per_bucket: int = 200,
         confidence_threshold: Optional[float] = None,
+        filter_afk: bool = True,
+        afk_bucket_id: Optional[str] = None,
         progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
     ) -> Dict[str, Any]:
-        """Clone events from source buckets, classify them into category and subcategory, and save into target bucket."""
+        """Clone events from source buckets, filter out AFK intervals, classify them into category and subcategory, and save into target bucket."""
         threshold = (
             confidence_threshold
             if confidence_threshold is not None
@@ -48,9 +52,12 @@ class ClassificationPipeline:
             client_name="aw-gemma-classifier",
         )
 
+        total_raw_events = 0
+        total_afk_filtered = 0
         total_processed = 0
         fast_calls = 0
         gemma_calls = 0
+        afk_buckets_used: Set[str] = set()
         category_distribution: Dict[str, int] = {}
         subcategory_distribution: Dict[str, int] = {}
         classified_events_to_insert: List[Dict[str, Any]] = []
@@ -62,6 +69,46 @@ class ClassificationPipeline:
             except Exception as e:
                 logger.error(f"Failed to fetch events from {source_id}: {e}")
                 continue
+
+            raw_event_count = len(events)
+            total_raw_events += raw_event_count
+
+            # AFK Filtering: account for AFK bucket and only consider items when user wasn't AFK
+            if filter_afk and events:
+                matched_afk = afk_bucket_id or self.aw_client.find_afk_bucket_for_source(source_id)
+                if matched_afk:
+                    try:
+                        min_time = min(parse_iso_timestamp(ev["timestamp"]) for ev in events)
+                        max_time = max(
+                            parse_iso_timestamp(ev["timestamp"])
+                            + timedelta(seconds=float(ev.get("duration", 0.0)))
+                            for ev in events
+                        )
+                        buf_start = to_iso_timestamp(min_time - timedelta(minutes=15))
+                        buf_end = to_iso_timestamp(max_time + timedelta(minutes=15))
+
+                        afk_events = self.aw_client.get_events(
+                            matched_afk, start=buf_start, end=buf_end, limit=0
+                        )
+                        if afk_events:
+                            events = filter_events_by_afk(events, afk_events)
+                            afk_buckets_used.add(matched_afk)
+                            dropped = raw_event_count - len(events)
+                            if dropped > 0:
+                                total_afk_filtered += dropped
+                                logger.info(
+                                    f"AFK Guard: filtered out {dropped} idle/AFK events from {source_id} using {matched_afk}"
+                                )
+                        else:
+                            logger.warning(
+                                f"No AFK events found in {matched_afk} between {buf_start} and {buf_end}. Keeping source events."
+                            )
+                    except Exception as e:
+                        logger.warning(
+                            f"AFK filtering failed for {source_id}: {e}. Proceeding with source events."
+                        )
+                else:
+                    logger.info(f"No matching AFK bucket found for {source_id}. Proceeding with raw events.")
 
             for event in events:
                 raw_data = event.get("data", {})
@@ -179,6 +226,10 @@ class ClassificationPipeline:
         stats = {
             "target_bucket_id": target_bucket_id,
             "source_buckets": source_bucket_ids,
+            "afk_filtering_enabled": filter_afk,
+            "afk_buckets_used": sorted(list(afk_buckets_used)),
+            "total_raw_events_fetched": total_raw_events,
+            "afk_events_filtered_out": total_afk_filtered,
             "total_events_processed": total_processed,
             "events_saved_to_new_bucket": inserted_count,
             "fast_classifier_calls": fast_calls,
