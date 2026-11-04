@@ -90,7 +90,7 @@ class FastClassifier:
                 samples_by_text: Dict[str, Dict[str, Any]] = {}
                 for s in raw_samples:
                     raw_text = s.get("text", "")
-                    clean_text = anonymizer.sanitize_title(raw_text)
+                    clean_text = anonymizer.sanitize_text(raw_text)
                     if clean_text != raw_text:
                         needs_rewrite = True
 
@@ -217,7 +217,7 @@ class FastClassifier:
         Returns True if a new sample was added or an existing sample updated;
         returns False if the sample already existed with identical classification.
         """
-        clean_text = anonymizer.sanitize_title(feature_text)
+        clean_text = anonymizer.sanitize_text(feature_text)
 
         if subcategory:
             cat = category.strip()
