@@ -27,12 +27,12 @@ def test_build_activitywatch_classes_structure():
 def test_build_activitywatch_classes_with_training_samples():
     training_samples = [
         {
-            "feature_text": "app:custom-ide title:project.rs",
+            "text": "app:firefox domain:aistudio.google.com root_domain:google.com title:AI Studio",
             "category": "Development",
             "subcategory": "Coding & IDE",
         },
         {
-            "feature_text": "app:my-chat title:chat with team",
+            "text": "app:brave domain:app.slack.com root_domain:slack.com title:chat with team",
             "category": "Communication",
             "subcategory": "Team Chat",
         },
@@ -40,10 +40,10 @@ def test_build_activitywatch_classes_with_training_samples():
 
     classes = build_activitywatch_classes(training_samples=training_samples)
     coding_class = next(c for c in classes if c["name"] == ["Development", "Coding & IDE"])
-    assert "custom\\-ide" in coding_class["rule"]["regex"]
+    assert "aistudio\\.google\\.com" in coding_class["rule"]["regex"]
 
     chat_class = next(c for c in classes if c["name"] == ["Communication", "Team Chat"])
-    assert "my\\-chat" in chat_class["rule"]["regex"]
+    assert "app\\.slack\\.com" in chat_class["rule"]["regex"]
 
 
 def test_sync_taxonomy_to_activitywatch():

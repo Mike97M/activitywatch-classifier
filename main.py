@@ -323,17 +323,22 @@ def main():
                 print(f"  • {full:40} : {cnt} events")
 
             print(f"\nRecent Categorized Activities (Latest {min(len(events), limit)}):")
-            print(f"{'Time':8} | {'App':15} | {'Category':20} | {'Subcategory':20} | {'Conf':5} | {'Classified By'}")
-            print("-" * 92)
+            print(f"{'Time':8} | {'App':12} | {'Category > Subcategory':30} | {'Conf':5} | {'Title / URL'}")
+            print("-" * 105)
             for ev in events[:limit]:
                 ts = (ev.get("timestamp") or "")[11:19]
                 data = ev.get("data", {})
-                app = (data.get("app") or "Unknown")[:15]
-                cat = (data.get("category") or "Uncategorized")[:20]
-                sub = (data.get("subcategory") or "General")[:20]
+                app = (data.get("app") or "Unknown")[:12]
+                cat = data.get("category") or "Uncategorized"
+                sub = data.get("subcategory") or "General"
+                full = f"{cat} > {sub}"[:30]
                 conf = f"{data.get('confidence', 0.0):.2f}"
-                by = data.get("classified_by", "")[:20]
-                print(f"{ts:8} | {app:15} | {cat:20} | {sub:20} | {conf:5} | {by}")
+                url = data.get("url")
+                title = data.get("title") or ""
+                target_str = url if url else title
+                if len(target_str) > 42:
+                    target_str = target_str[:39] + "..."
+                print(f"{ts:8} | {app:12} | {full:30} | {conf:5} | {target_str}")
             print()
         except Exception as e:
             print(f"Error inspecting target bucket '{target}': {e}")

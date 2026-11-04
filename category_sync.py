@@ -76,17 +76,30 @@ def build_activitywatch_classes(
     for sample in samples:
         cat = sample.get("category")
         sub = sample.get("subcategory") or "General"
-        feat = sample.get("feature_text", "")
+        feat = sample.get("text", "") or sample.get("feature_text", "")
         if not cat:
             continue
         discovered_keywords.setdefault(cat, {}).setdefault(sub, set())
-        
-        # Extract apps and domains
+
+        # Extract applications
         app_match = re.search(r"app:([^\s]+)", feat)
         if app_match:
             app_val = app_match.group(1).strip()
-            if len(app_val) > 2 and app_val not in ("unknown", "none"):
+            if len(app_val) > 2 and app_val not in ("unknown", "none", "browser"):
                 discovered_keywords[cat][sub].add(re.escape(app_val))
+
+        # Extract domains and URLs
+        domain_match = re.search(r"domain:([^\s]+)", feat)
+        if domain_match:
+            dom_val = domain_match.group(1).strip()
+            if len(dom_val) > 3 and "." in dom_val and not dom_val.startswith("127."):
+                discovered_keywords[cat][sub].add(re.escape(dom_val))
+
+        root_match = re.search(r"root_domain:([^\s]+)", feat)
+        if root_match:
+            root_val = root_match.group(1).strip()
+            if len(root_val) > 3 and "." in root_val and not root_val.startswith("127."):
+                discovered_keywords[cat][sub].add(re.escape(root_val))
 
     classes: List[Dict[str, Any]] = []
     class_id = 1

@@ -230,10 +230,11 @@ class AWClient:
         events: List[Dict[str, Any]],
         host: str = "classified",
     ) -> bool:
-        """Synchronize classified activities into ActivityWatch currentwindow & afkstatus buckets.
+        """Synchronize classified activities into ActivityWatch currentwindow, web.tab.current, and afkstatus buckets.
         
         This enables viewing the classified events directly under the 'Activity' tab
-        of ActivityWatch (e.g. http://localhost:5600/#/activity/classified/).
+        of ActivityWatch (e.g. http://localhost:5600/#/activity/classified/), including
+        Top Applications, Window Titles, Top Domains, Top URLs, and Browser Tabs.
         """
         if not events:
             return True
@@ -242,22 +243,60 @@ class AWClient:
         from afk_filter import parse_iso_timestamp, to_iso_timestamp
 
         window_bucket = f"aw-watcher-window_{host}"
+        web_bucket = f"aw-watcher-web_{host}"
         afk_bucket = f"aw-watcher-afk_{host}"
 
         # 1. Ensure buckets exist
         self.create_bucket(bucket_id=window_bucket, bucket_type="currentwindow", hostname=host)
         self.create_bucket(bucket_id=afk_bucket, bucket_type="afkstatus", hostname=host)
 
-        # 2. Insert window events
+        # 2. Separate into window events and browser web tab events
         window_events = []
+        web_events = []
         for e in events:
             d = dict(e.get("data", {}))
+            url_val = str(d.get("url") or "").strip()
+            app_val = str(d.get("app") or "").strip()
+
+            if not app_val and url_val:
+                app_val = "Browser"
+                d["app"] = app_val
+
             window_events.append({
                 "timestamp": e.get("timestamp"),
                 "duration": e.get("duration", 0.0),
                 "data": d,
             })
+
+            if url_val:
+                web_events.append({
+                    "timestamp": e.get("timestamp"),
+                    "duration": e.get("duration", 0.0),
+                    "data": {
+                        "title": d.get("title") or url_val,
+                        "url": url_val,
+                        "audible": d.get("audible", False),
+                        "incognito": d.get("incognito", False),
+                        "tabCount": d.get("tabCount", 1),
+                        "category": d.get("category"),
+                        "subcategory": d.get("subcategory"),
+                        "full_category": d.get("full_category"),
+                        "confidence": d.get("confidence", 1.0),
+                        "classified_by": d.get("classified_by", ""),
+                    },
+                })
+
         self.insert_events(window_bucket, window_events)
+
+        if web_events:
+            self.create_bucket(
+                bucket_id=web_bucket,
+                bucket_type="web.tab.current",
+                client_name="aw-watcher-web",
+                hostname=host,
+            )
+            self.insert_events(web_bucket, web_events)
+            logger.info(f"Synchronized {len(web_events)} web events with URLs to '{web_bucket}'")
 
         # 3. Insert non-AFK span covering the events so ActivityWatch marks them active
         try:
