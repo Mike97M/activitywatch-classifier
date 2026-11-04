@@ -3,7 +3,9 @@
 import json
 import logging
 from pathlib import Path
+import re
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import urlparse
 import joblib
 import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
@@ -83,9 +85,9 @@ class FastClassifier:
                         if line.strip():
                             raw_samples.append(json.loads(line))
 
-                # Sanitize all historic samples and ensure hierarchical format
+                # Sanitize all historic samples, ensure hierarchical format, and deduplicate
                 needs_rewrite = False
-                sanitized_samples = []
+                samples_by_text: Dict[str, Dict[str, Any]] = {}
                 for s in raw_samples:
                     raw_text = s.get("text", "")
                     clean_text = anonymizer.sanitize_title(raw_text)
@@ -110,15 +112,20 @@ class FastClassifier:
                     else:
                         cat, sub = split_category_path(full_raw)
 
-                    sanitized_samples.append({
+                    sample_dict = {
                         "text": clean_text,
                         "category": cat,
                         "subcategory": sub,
                         "full_category": full_raw,
                         "source": s.get("source", "historic"),
-                    })
+                    }
 
-                self.training_samples = sanitized_samples
+                    if clean_text in samples_by_text:
+                        needs_rewrite = True
+
+                    samples_by_text[clean_text] = sample_dict
+
+                self.training_samples = list(samples_by_text.values())
                 logger.info(f"Loaded {len(self.training_samples)} sanitized training examples.")
 
                 if needs_rewrite:
@@ -135,19 +142,39 @@ class FastClassifier:
 
     @staticmethod
     def extract_features(event_data: Dict[str, Any]) -> str:
-        """Create sanitized textual signature from event payload with zero PII."""
+        """Create sanitized textual signature from event payload with zero PII and rich domain/link signals."""
         clean_data = anonymizer.sanitize_event_data(event_data)
         app = str(clean_data.get("app") or "").strip().lower()
         title = str(clean_data.get("title") or "").strip().lower()
         url = str(clean_data.get("url") or "").strip().lower()
 
         domain = ""
-        if url.startswith("http://") or url.startswith("https://"):
-            parts = url.split("/")
-            if len(parts) > 2:
-                domain = parts[2]
+        root_domain = ""
+        path_words: List[str] = []
 
-        return f"app:{app} domain:{domain} title:{title} url:{url}"
+        if url:
+            try:
+                test_url = url if "://" in url else f"https://{url}"
+                parsed = urlparse(test_url)
+                netloc = parsed.netloc.lower().split(":")[0]
+                domain = netloc
+
+                parts = netloc.split(".")
+                if len(parts) >= 2:
+                    root_domain = ".".join(parts[-2:])
+                else:
+                    root_domain = netloc
+
+                for segment in parsed.path.lower().split("/"):
+                    seg = segment.strip()
+                    if len(seg) >= 3 and not re.match(r"^[0-9a-f\-]+$", seg) and not seg.isdigit():
+                        path_words.append(seg)
+            except Exception:
+                domain = ""
+                root_domain = ""
+
+        path_str = " ".join(path_words[:6])
+        return f"app:{app} domain:{domain} root_domain:{root_domain} path:{path_str} title:{title} url:{url}"
 
     def predict(self, feature_text: str) -> Tuple[str, float, Dict[str, float]]:
         """Predict full category (Category > Subcategory) and confidence score."""
@@ -184,8 +211,12 @@ class FastClassifier:
         subcategory: Optional[str] = None,
         source: str = "gemma_oracle",
         retrain_now: bool = True,
-    ):
-        """Record newly labeled sample with full hierarchy and PII sanitization."""
+    ) -> bool:
+        """Record newly labeled sample with full hierarchy, deduplication, and PII sanitization.
+
+        Returns True if a new sample was added or an existing sample updated;
+        returns False if the sample already existed with identical classification.
+        """
         clean_text = anonymizer.sanitize_title(feature_text)
 
         if subcategory:
@@ -200,20 +231,45 @@ class FastClassifier:
             sub = "General"
             full_cat = f"{cat} > {sub}"
 
-        sample = {
-            "text": clean_text,
-            "category": cat,
-            "subcategory": sub,
-            "full_category": full_cat,
-            "source": source,
-        }
-        self.training_samples.append(sample)
+        # Deduplicate: check if this text already exists
+        existing_idx = None
+        for i, s in enumerate(self.training_samples):
+            if s.get("text") == clean_text:
+                existing_idx = i
+                break
 
-        try:
-            with open(self.training_data_path, "a", encoding="utf-8") as f:
-                f.write(json.dumps(sample) + "\n")
-        except Exception as e:
-            logger.warning(f"Failed to append sample to {self.training_data_path}: {e}")
+        if existing_idx is not None:
+            existing = self.training_samples[existing_idx]
+            if existing.get("full_category") == full_cat:
+                return False
+
+            # Existing entry has different category -> update in place (e.g. human correction)
+            existing["category"] = cat
+            existing["subcategory"] = sub
+            existing["full_category"] = full_cat
+            existing["source"] = source
+
+            try:
+                with open(self.training_data_path, "w", encoding="utf-8") as f:
+                    for s in self.training_samples:
+                        f.write(json.dumps(s) + "\n")
+            except Exception as e:
+                logger.warning(f"Failed to rewrite {self.training_data_path}: {e}")
+        else:
+            sample = {
+                "text": clean_text,
+                "category": cat,
+                "subcategory": sub,
+                "full_category": full_cat,
+                "source": source,
+            }
+            self.training_samples.append(sample)
+
+            try:
+                with open(self.training_data_path, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(sample) + "\n")
+            except Exception as e:
+                logger.warning(f"Failed to append sample to {self.training_data_path}: {e}")
 
         if cat not in self.categories:
             self.categories.append(cat)
@@ -223,6 +279,8 @@ class FastClassifier:
             unique_classes = set(s["full_category"] for s in self.training_samples)
             if len(unique_classes) >= 2:
                 self.retrain_full()
+
+        return True
 
     def retrain_full(self) -> bool:
         """Full retrain on all accumulated hierarchical training data."""

@@ -100,6 +100,24 @@ async function fetchStatus() {
     document.getElementById("slider-threshold-label").textContent = data.confidence_threshold.toFixed(2);
     document.getElementById("confidence-threshold-slider").value = data.confidence_threshold;
 
+    // Git tracking status
+    const gitBadge = document.getElementById("git-status-badge");
+    const gitInfo = document.getElementById("git-last-commit-info");
+    if (gitBadge && data.git_status) {
+      const gs = data.git_status;
+      if (gs.is_modified_or_untracked) {
+        gitBadge.className = "px-1.5 py-0.5 rounded text-[9px] font-mono bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-300 border border-amber-300 dark:border-amber-800";
+        gitBadge.textContent = "Git: Uncommitted";
+      } else {
+        const shortHash = gs.commit_hash || "Clean";
+        gitBadge.className = "px-1.5 py-0.5 rounded text-[9px] font-mono bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800";
+        gitBadge.textContent = `Git: ${shortHash}`;
+      }
+      if (gitInfo && gs.last_commit) {
+        gitInfo.textContent = gs.last_commit;
+      }
+    }
+
     currentCategories = data.classifier.all_configured_categories || [];
     currentTaxonomy = data.classifier.taxonomy || data.gemma_oracle.taxonomy || {};
 
@@ -205,6 +223,12 @@ async function runPipeline() {
   const filterAfk = document.getElementById("toggle-filter-afk")
     ? document.getElementById("toggle-filter-afk").checked
     : true;
+  const collectTraining = document.getElementById("toggle-collect-training")
+    ? document.getElementById("toggle-collect-training").checked
+    : true;
+  const autoCommit = document.getElementById("toggle-auto-commit")
+    ? document.getElementById("toggle-auto-commit").checked
+    : false;
 
   if (sourceBucketIds.length === 0) {
     alert("Please select at least one source bucket to clone activities from.");
@@ -233,6 +257,8 @@ async function runPipeline() {
         limit_per_bucket: limit,
         confidence_threshold: threshold,
         filter_afk: filterAfk,
+        collect_training_data: collectTraining,
+        auto_commit_git: autoCommit,
       }),
     });
 
@@ -547,6 +573,35 @@ function setupEventListeners() {
   document.getElementById("btn-run-pipeline").addEventListener("click", runPipeline);
   document.getElementById("btn-refresh-buckets").addEventListener("click", fetchBuckets);
   document.getElementById("btn-refresh-events").addEventListener("click", () => loadTargetEvents());
+
+  // Manual Git Commit Button
+  const btnGitCommit = document.getElementById("btn-manual-git-commit");
+  if (btnGitCommit) {
+    btnGitCommit.addEventListener("click", async () => {
+      btnGitCommit.disabled = true;
+      const originalHtml = btnGitCommit.innerHTML;
+      btnGitCommit.innerHTML = `<i class="fa-solid fa-spinner fa-spin text-xs"></i>`;
+      try {
+        const res = await fetch("/api/git/commit", { method: "POST" });
+        const data = await res.json();
+        if (data.success) {
+          if (data.committed) {
+            alert(`Git commit created: [${data.commit_hash}] ${data.message}`);
+          } else {
+            alert(data.message || "Training data is already up to date in Git.");
+          }
+          await fetchStatus();
+        } else {
+          alert("Git commit error: " + (data.error || data.message || "Unknown error"));
+        }
+      } catch (err) {
+        alert("Git commit failed: " + err.message);
+      } finally {
+        btnGitCommit.disabled = false;
+        btnGitCommit.innerHTML = originalHtml;
+      }
+    });
+  }
 
   // Theme Toggle Button
   const btnTheme = document.getElementById("btn-theme-toggle");

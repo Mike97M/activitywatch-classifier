@@ -8,6 +8,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+import git_sync
 from aw_client import AWClient
 from classifier import FastClassifier
 from config import (
@@ -75,12 +76,19 @@ class RunPipelineRequest(BaseModel):
     confidence_threshold: Optional[float] = None
     filter_afk: bool = True
     afk_bucket_id: Optional[str] = None
+    collect_training_data: bool = True
+    auto_commit_git: bool = False
 
 
 class EventCorrectionRequest(BaseModel):
     feature_text: str
     correct_category: str
     correct_subcategory: Optional[str] = None
+    auto_commit_git: bool = False
+
+
+class GitCommitRequest(BaseModel):
+    message: Optional[str] = None
 
 
 class DownloadGemmaRequest(BaseModel):
@@ -111,13 +119,37 @@ def get_status() -> Dict[str, Any]:
         "local_model": gemma_oracle.get_local_model_info(),
     }
 
+    git_status = git_sync.get_training_data_status()
+
     return {
         "activitywatch": aw_status,
         "classifier": classifier_stats,
         "gemma_oracle": oracle_status,
         "confidence_threshold": pipeline.confidence_threshold,
         "last_run_stats": pipeline.last_run_stats,
+        "git_status": git_status,
     }
+
+
+@app.get("/api/git/status")
+def get_git_status() -> Dict[str, Any]:
+    """Return Git sync status of training_data.jsonl."""
+    try:
+        return git_sync.get_training_data_status()
+    except Exception as e:
+        logger.exception("Failed to get git status")
+        raise HTTPException(status_code=500, detail=f"Git status error: {e}")
+
+
+@app.post("/api/git/commit")
+def commit_git(req: Optional[GitCommitRequest] = None) -> Dict[str, Any]:
+    """Manually commit training data to Git repository."""
+    try:
+        msg = req.message if req else None
+        return git_sync.commit_training_data(message=msg)
+    except Exception as e:
+        logger.exception("Manual git commit failed")
+        raise HTTPException(status_code=500, detail=f"Git commit error: {e}")
 
 
 @app.post("/api/download-gemma")
@@ -198,6 +230,8 @@ def run_pipeline(req: RunPipelineRequest) -> Dict[str, Any]:
             confidence_threshold=req.confidence_threshold,
             filter_afk=req.filter_afk,
             afk_bucket_id=req.afk_bucket_id,
+            collect_training_data=req.collect_training_data,
+            auto_commit_git=req.auto_commit_git,
         )
         return {"status": "completed", "results": stats}
     except Exception as e:
@@ -211,14 +245,31 @@ def correct_event(req: EventCorrectionRequest) -> Dict[str, Any]:
     if not req.feature_text or not req.correct_category:
         raise HTTPException(status_code=400, detail="Missing feature_text or correct_category")
 
-    classifier.add_training_sample(
+    changed = classifier.add_training_sample(
         feature_text=req.feature_text,
         category=req.correct_category,
         subcategory=req.correct_subcategory,
         source="human_correction",
         retrain_now=True,
     )
-    return {"status": "trained", "classifier_stats": classifier.get_stats()}
+
+    git_res = None
+    if req.auto_commit_git and changed:
+        sub_desc = f" > {req.correct_subcategory}" if req.correct_subcategory else ""
+        try:
+            git_res = git_sync.commit_training_data(
+                message=f"data: human correction for '{req.correct_category}{sub_desc}'"
+            )
+        except Exception as e:
+            logger.warning(f"Git auto-commit on correction failed: {e}")
+
+    return {
+        "status": "trained",
+        "changed": changed,
+        "classifier_stats": classifier.get_stats(),
+        "git_commit": git_res,
+        "git_status": git_sync.get_training_data_status(),
+    }
 
 
 @app.post("/api/sync-categories")

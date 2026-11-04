@@ -65,3 +65,16 @@ def test_classifier_extract_features_anonymization():
     assert "secret1234567890" not in feat
     assert "<user>" in feat or "<path>" in feat
     assert "redacted" in feat
+
+
+def test_classifier_extract_features_domain_and_url():
+    event_data = {
+        "app": "firefox",
+        "title": "Install Awacther On openSUSE | Google AI Studio",
+        "url": "https://aistudio.google.com/prompts/1r4qFlm2qdyyZqOB7ezsAmmYuSvvFswoz",
+    }
+    feat = FastClassifier.extract_features(event_data)
+    assert "domain:aistudio.google.com" in feat
+    assert "root_domain:google.com" in feat
+    assert "path:prompts" in feat
+    assert "app:firefox" in feat

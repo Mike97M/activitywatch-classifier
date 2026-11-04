@@ -80,9 +80,32 @@ def main():
         default=None,
         help="Explicit AFK bucket ID to filter against (auto-detected by default)",
     )
+    run_parser.add_argument(
+        "--collect-training-data",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Collect novel PII-sanitized activities to expand training dataset (default: True)",
+    )
+    run_parser.add_argument(
+        "--auto-commit",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Automatically commit updated training data to Git (default: False)",
+    )
 
     # Status command
     status_parser = subparsers.add_parser("status", help="Show ActivityWatch & Classifier status")
+
+    # Commit training data command
+    commit_parser = subparsers.add_parser(
+        "commit-data", help="Stage and commit data/training_data.jsonl to Git"
+    )
+    commit_parser.add_argument(
+        "--message",
+        "-m",
+        default=None,
+        help="Commit message for training data",
+    )
 
     # View bucket command
     view_parser = subparsers.add_parser("view", help="View categorized activities and taxonomy distribution")
@@ -127,7 +150,7 @@ def main():
         print(f" ActivityWatch Gemma Classifier Web UI")
         print(f" Dashboard running at: http://localhost:{port}")
         print(f"========================================================\n")
-        uvicorn.run("app:app", host=host, port=port, reload=False)
+        uvicorn.run("app:app", host=host, port=port, reload=True)
         return
 
     if args.command == "download-gemma":
@@ -188,6 +211,28 @@ def main():
         else:
             print("  No local GGUF found in models/.")
             print("  To download directly, run: uv run python main.py download-gemma")
+
+        import git_sync
+        git_st = git_sync.get_training_data_status()
+        print("\nGit Dataset Status:")
+        print(f"  Dataset File:       {git_st['file']}")
+        print(f"  Total Samples:      {git_st['sample_count']}")
+        print(f"  Uncommitted:        {git_st['is_modified_or_untracked']} ({git_st['status_code']})")
+        print(f"  Last Commit:        {git_st['last_commit']}")
+        return
+
+    if args.command == "commit-data":
+        import git_sync
+        print("Staging and committing data/training_data.jsonl...")
+        res = git_sync.commit_training_data(message=args.message)
+        if res.get("success"):
+            if res.get("committed"):
+                print(f"Success! [{res['commit_hash']}] {res['message']}")
+            else:
+                print(f"Clean: {res.get('message')}")
+            print(f"Total dataset samples: {res.get('sample_count')}")
+        else:
+            print(f"Commit failed: {res.get('error') or res.get('message')}")
         return
 
     if args.command == "run":
@@ -199,7 +244,9 @@ def main():
         print(f"  AFK Guard:      {'Enabled' if args.filter_afk else 'Disabled'}")
         if args.afk_bucket:
             print(f"  AFK Bucket:     {args.afk_bucket}")
-        print(f"  Gemma Backend:  {args.backend}\n")
+        print(f"  Gemma Backend:  {args.backend}")
+        print(f"  Auto-Expand:    {args.collect_training_data}")
+        print(f"  Auto-Commit:    {args.auto_commit}\n")
 
         oracle = GemmaOracle(backend=args.backend, local_gguf_path=args.model_path)
         pipeline = ClassificationPipeline(gemma_oracle=oracle, confidence_threshold=args.threshold)
@@ -210,6 +257,8 @@ def main():
             confidence_threshold=args.threshold,
             filter_afk=args.filter_afk,
             afk_bucket_id=args.afk_bucket,
+            collect_training_data=args.collect_training_data,
+            auto_commit_git=args.auto_commit,
         )
 
         print("\nPipeline Run Completed!")
@@ -221,6 +270,14 @@ def main():
         print(f"  Events Saved to '{args.target}': {results['events_saved_to_new_bucket']}")
         print(f"  Fast Classifier calls:   {results['fast_classifier_calls']}")
         print(f"  Gemma Oracle calls:      {results['gemma_oracle_calls']}")
+        if results.get("new_training_samples_added") is not None:
+            print(f"  New Training Samples:    {results['new_training_samples_added']}")
+        if results.get("git_commit"):
+            gc = results["git_commit"]
+            if gc.get("committed"):
+                print(f"  Git Commit:              [{gc.get('commit_hash')}] {gc.get('message')}")
+            else:
+                print(f"  Git Commit:              {gc.get('message')}")
         print(f"  Category Distribution:   {results['category_distribution']}")
         return
 

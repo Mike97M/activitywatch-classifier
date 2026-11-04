@@ -166,14 +166,26 @@ class GemmaOracle:
             tax_lines.append(f"- {cat}: [{sub_str}]")
         taxonomy_text = "\n".join(tax_lines)
 
+        parsed_domain = ""
+        if url:
+            try:
+                from urllib.parse import urlparse
+                test_url = url if "://" in url else f"https://{url}"
+                p = urlparse(test_url)
+                parsed_domain = p.netloc.lower().split(":")[0]
+            except Exception:
+                parsed_domain = ""
+
         return (
             f"You are Gemma E2B, an expert activity classifier for ActivityWatch.\n"
             f"Task: Categorize the following user activity into exactly ONE category and a matching subcategory from this taxonomy:\n\n"
             f"{taxonomy_text}\n\n"
             f"Activity Details:\n"
-            f"- Application: {app or 'unknown'}\n"
+            f"- Application: {app or 'browser'}\n"
             f"- Window / Tab Title: {title or 'unknown'}\n"
-            f"- URL: {url or 'none'}\n\n"
+            f"- Website Domain: {parsed_domain or 'none'}\n"
+            f"- URL / Link: {url or 'none'}\n\n"
+            f"Pay special attention to the domain and URL path (e.g., code repositories, tech documentation, streaming, news, or search).\n"
             f"Respond with ONLY a valid JSON object in this exact schema, with no markdown fences:\n"
             f'{{"category": "<Category>", "subcategory": "<Subcategory>", "confidence": 0.95, "reasoning": "<1-sentence reasoning>"}}'
         )
@@ -348,8 +360,26 @@ class GemmaOracle:
         url: Optional[str],
         taxonomy: Dict[str, List[str]],
     ) -> Dict[str, Any]:
-        """Granular heuristic classifier outputting Category and Subcategory."""
-        combined = f"{app} {title} {url or ''}".lower()
+        """Granular heuristic classifier outputting Category and Subcategory with domain awareness."""
+        parsed_domain = ""
+        root_domain = ""
+        if url:
+            try:
+                from urllib.parse import urlparse
+                test_url = url if "://" in url else f"https://{url}"
+                p = urlparse(test_url)
+                netloc = p.netloc.lower().split(":")[0]
+                parsed_domain = netloc
+                parts = netloc.split(".")
+                if len(parts) >= 2:
+                    root_domain = ".".join(parts[-2:])
+                else:
+                    root_domain = netloc
+            except Exception:
+                parsed_domain = ""
+                root_domain = ""
+
+        combined = f"{app} {title} {url or ''} {parsed_domain} {root_domain}".lower()
 
         def pick_sub(cat: str, target_sub: str) -> str:
             subs = taxonomy.get(cat, ["General"])
@@ -409,18 +439,18 @@ class GemmaOracle:
             category = "Development"
             subcategory = pick_sub("Development", "DevOps & Terminal")
             reason = "Detected shell terminal, SSH session, or command-line environment"
-        elif any(sig in combined for sig in ["git", "github", "gitlab", "pull request", "commit", "diff", "bitbucket"]):
+        elif any(sig in combined for sig in ["git", "github", "gitlab", "pull request", "commit", "diff", "bitbucket", "gitea"]):
             category = "Development"
             subcategory = pick_sub("Development", "Git & Code Review")
             reason = "Detected version control or repository code review"
-        elif any(sig in combined for sig in ["stackoverflow", "devdocs", "api reference", "documentation", "man "]):
+        elif any(sig in combined for sig in ["stackoverflow", "devdocs", "api reference", "documentation", "man ", "developer.mozilla", "readthedocs", "crates.io", "pypi.org"]):
             category = "Development"
             subcategory = pick_sub("Development", "Documentation & API")
-            reason = "Detected programming documentation or StackOverflow"
-        elif any(sig in combined for sig in ["code", "vscode", "vscodium", "vim", "nvim", "pycharm", "rust", "cargo", "python", "serpextractor"]):
+            reason = "Detected programming documentation, crate/package registry, or StackOverflow"
+        elif any(sig in combined for sig in ["code", "vscode", "vscodium", "vim", "nvim", "pycharm", "rust", "cargo", "python", "serpextractor", "aistudio", "huggingface", "claude", "chatgpt", "openai", "colab", "kaggle", "jupyter"]):
             category = "Development"
             subcategory = pick_sub("Development", "Coding & IDE")
-            reason = "Detected source code editor or software engineering"
+            reason = "Detected source code editor, AI developer tooling, or programming workspace"
 
         # 5. Productivity & Planning
         elif any(sig in combined for sig in ["notion", "obsidian", "logseq", "wiki"]):

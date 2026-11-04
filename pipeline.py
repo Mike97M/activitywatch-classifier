@@ -2,12 +2,18 @@
 
 from datetime import timedelta
 import logging
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Set
 from afk_filter import filter_events_by_afk, parse_iso_timestamp, to_iso_timestamp
 from anonymizer import anonymizer
 from aw_client import AWClient
 from classifier import FastClassifier
-from config import DEFAULT_CONFIDENCE_THRESHOLD, DEFAULT_TARGET_BUCKET_ID, split_category_path
+from config import (
+    DEFAULT_CONFIDENCE_THRESHOLD,
+    DEFAULT_TARGET_BUCKET_ID,
+    TRAINING_DATA_PATH,
+    split_category_path,
+)
 from gemma_oracle import GemmaOracle
 
 logger = logging.getLogger("pipeline")
@@ -37,6 +43,8 @@ class ClassificationPipeline:
         filter_afk: bool = True,
         afk_bucket_id: Optional[str] = None,
         progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
+        collect_training_data: bool = True,
+        auto_commit_git: bool = False,
     ) -> Dict[str, Any]:
         """Clone events from source buckets, filter out AFK intervals, classify them into category and subcategory, and save into target bucket."""
         threshold = (
@@ -57,6 +65,7 @@ class ClassificationPipeline:
         total_processed = 0
         fast_calls = 0
         gemma_calls = 0
+        new_training_samples = 0
         afk_buckets_used: Set[str] = set()
         category_distribution: Dict[str, int] = {}
         subcategory_distribution: Dict[str, int] = {}
@@ -114,6 +123,23 @@ class ClassificationPipeline:
                 raw_data = event.get("data", {})
                 clean_data = anonymizer.sanitize_event_data(raw_data)
                 app = clean_data.get("app", "")
+                
+                # If app is empty (common in web watcher buckets), infer from bucket ID
+                if not app and source_id:
+                    s_lower = source_id.lower()
+                    if "firefox" in s_lower:
+                        app = "firefox"
+                    elif "brave" in s_lower:
+                        app = "brave"
+                    elif "chromium" in s_lower or "chrome" in s_lower:
+                        app = "chromium"
+                    elif "edge" in s_lower:
+                        app = "edge"
+                    elif "web" in s_lower:
+                        app = "browser"
+                    if app:
+                        clean_data["app"] = app
+
                 title = clean_data.get("title", "")
                 url = clean_data.get("url", "")
 
@@ -142,14 +168,17 @@ class ClassificationPipeline:
                     reasoning = gemma_res.get("reasoning", "")
                     gemma_calls += 1
 
-                    # Add new training sample with full category & subcategory
-                    self.classifier.add_training_sample(
-                        feature_text=feature_text,
-                        category=chosen_category,
-                        subcategory=chosen_subcategory,
-                        source="gemma_e2b",
-                        retrain_now=True,
-                    )
+                    # Add new training sample if enabled (deferred retrain for batch speed)
+                    if collect_training_data:
+                        added = self.classifier.add_training_sample(
+                            feature_text=feature_text,
+                            category=chosen_category,
+                            subcategory=chosen_subcategory,
+                            source="gemma_e2b",
+                            retrain_now=False,
+                        )
+                        if added:
+                            new_training_samples += 1
                 else:
                     chosen_category = pred_cat
                     chosen_subcategory = pred_subcat
@@ -158,6 +187,18 @@ class ClassificationPipeline:
                     classified_by = "fast_classifier"
                     reasoning = f"High confidence prediction ({confidence:.2f})"
                     fast_calls += 1
+
+                    # Collect novel confident activities to continually expand training dataset
+                    if collect_training_data and confidence >= 0.70:
+                        added = self.classifier.add_training_sample(
+                            feature_text=feature_text,
+                            category=chosen_category,
+                            subcategory=chosen_subcategory,
+                            source="fast_classifier",
+                            retrain_now=False,
+                        )
+                        if added:
+                            new_training_samples += 1
 
                 category_distribution[chosen_category] = (
                     category_distribution.get(chosen_category, 0) + 1
@@ -236,6 +277,30 @@ class ClassificationPipeline:
             except Exception as e:
                 logger.warning(f"Failed to auto-sync category rules to ActivityWatch: {e}")
 
+        # Retrain fast classifier if new samples were added during batch
+        if new_training_samples > 0:
+            logger.info(
+                f"Retraining fast classifier with {new_training_samples} new unique training samples..."
+            )
+            self.classifier.retrain_full()
+
+        # Git dataset commit
+        git_commit_res = None
+        git_status_res = None
+        try:
+            import git_sync
+            if (
+                auto_commit_git
+                and new_training_samples > 0
+                and Path(self.classifier.training_data_path).resolve() == Path(TRAINING_DATA_PATH).resolve()
+            ):
+                git_commit_res = git_sync.commit_training_data(
+                    message=f"data: auto-add {new_training_samples} training samples via classifier pipeline"
+                )
+            git_status_res = git_sync.get_training_data_status()
+        except Exception as e:
+            logger.warning(f"Git dataset sync failed: {e}")
+
         stats = {
             "target_bucket_id": target_bucket_id,
             "source_buckets": source_bucket_ids,
@@ -248,6 +313,9 @@ class ClassificationPipeline:
             "fast_classifier_calls": fast_calls,
             "gemma_oracle_calls": gemma_calls,
             "confidence_threshold": threshold,
+            "new_training_samples_added": new_training_samples,
+            "git_commit": git_commit_res,
+            "git_status": git_status_res,
             "category_distribution": category_distribution,
             "subcategory_distribution": subcategory_distribution,
             "recent_preview": recent_preview,
