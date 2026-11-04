@@ -3,7 +3,7 @@
 from datetime import datetime, timedelta, timezone
 import logging
 import re
-from typing import Any, Dict, List, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 logger = logging.getLogger("afk_filter")
 
@@ -52,6 +52,54 @@ def to_iso_timestamp(dt: datetime) -> str:
     else:
         dt = dt.astimezone(timezone.utc)
     return dt.isoformat().replace("+00:00", "Z")
+
+
+def resolve_time_range(
+    time_range: Optional[str] = None,
+    start_time: Optional[Union[str, datetime]] = None,
+    end_time: Optional[Union[str, datetime]] = None,
+    now: Optional[datetime] = None,
+) -> Tuple[Optional[str], Optional[str]]:
+    """Convert time range specification into ActivityWatch ISO start and end timestamps.
+
+    Supported time_range values:
+    - 'today': From midnight today (UTC) to now
+    - 'last_day' / '24h' / 'day': Past 24 hours
+    - 'last_week' / '7d' / 'week': Past 7 days
+    - 'last_month' / '30d' / 'month': Past 30 days
+    - 'all': None (unbounded)
+    - Custom start_time / end_time: Parsed and formatted to ISO strings
+    """
+    curr = now or datetime.now(timezone.utc)
+    if curr.tzinfo is None:
+        curr = curr.replace(tzinfo=timezone.utc)
+
+    # 1. Explicit start / end override
+    if start_time or end_time:
+        start_iso = to_iso_timestamp(parse_iso_timestamp(start_time)) if start_time else None
+        end_iso = to_iso_timestamp(parse_iso_timestamp(end_time)) if end_time else None
+        return (start_iso, end_iso)
+
+    if not time_range or time_range.strip().lower() in ("count", "none", "events"):
+        return (None, None)
+
+    tr = time_range.strip().lower()
+    if tr in ("today", "current_day"):
+        start_dt = curr.replace(hour=0, minute=0, second=0, microsecond=0)
+        return (to_iso_timestamp(start_dt), to_iso_timestamp(curr))
+    elif tr in ("last_day", "24h", "1d", "day"):
+        start_dt = curr - timedelta(days=1)
+        return (to_iso_timestamp(start_dt), to_iso_timestamp(curr))
+    elif tr in ("last_week", "7d", "1w", "week"):
+        start_dt = curr - timedelta(days=7)
+        return (to_iso_timestamp(start_dt), to_iso_timestamp(curr))
+    elif tr in ("last_month", "30d", "1m", "month"):
+        start_dt = curr - timedelta(days=30)
+        return (to_iso_timestamp(start_dt), to_iso_timestamp(curr))
+    elif tr in ("all", "all_time"):
+        return (None, None)
+
+    return (None, None)
 
 
 def merge_intervals(intervals: List[Tuple[datetime, datetime]]) -> List[Tuple[datetime, datetime]]:

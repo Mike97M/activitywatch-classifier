@@ -73,6 +73,9 @@ class RunPipelineRequest(BaseModel):
     source_bucket_ids: List[str]
     target_bucket_id: str = DEFAULT_TARGET_BUCKET_ID
     limit_per_bucket: int = 150
+    time_range: Optional[str] = None  # e.g. "today", "24h", "7d", "30d", "all", "count"
+    start_time: Optional[str] = None  # ISO timestamp
+    end_time: Optional[str] = None    # ISO timestamp
     confidence_threshold: Optional[float] = None
     filter_afk: bool = True
     afk_bucket_id: Optional[str] = None
@@ -227,6 +230,9 @@ def run_pipeline(req: RunPipelineRequest) -> Dict[str, Any]:
             source_bucket_ids=req.source_bucket_ids,
             target_bucket_id=req.target_bucket_id.strip() or DEFAULT_TARGET_BUCKET_ID,
             limit_per_bucket=req.limit_per_bucket,
+            time_range=req.time_range,
+            start_time=req.start_time,
+            end_time=req.end_time,
             confidence_threshold=req.confidence_threshold,
             filter_afk=req.filter_afk,
             afk_bucket_id=req.afk_bucket_id,

@@ -4,7 +4,12 @@ from datetime import timedelta
 import logging
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Set
-from afk_filter import filter_events_by_afk, parse_iso_timestamp, to_iso_timestamp
+from afk_filter import (
+    filter_events_by_afk,
+    parse_iso_timestamp,
+    resolve_time_range,
+    to_iso_timestamp,
+)
 from anonymizer import anonymizer
 from aw_client import AWClient
 from classifier import FastClassifier
@@ -38,7 +43,10 @@ class ClassificationPipeline:
         self,
         source_bucket_ids: List[str],
         target_bucket_id: str = DEFAULT_TARGET_BUCKET_ID,
-        limit_per_bucket: int = 200,
+        limit_per_bucket: int = 150,
+        time_range: Optional[str] = None,
+        start_time: Optional[str] = None,
+        end_time: Optional[str] = None,
         confidence_threshold: Optional[float] = None,
         filter_afk: bool = True,
         afk_bucket_id: Optional[str] = None,
@@ -46,12 +54,28 @@ class ClassificationPipeline:
         collect_training_data: bool = True,
         auto_commit_git: bool = False,
     ) -> Dict[str, Any]:
-        """Clone events from source buckets, filter out AFK intervals, classify them into category and subcategory, and save into target bucket."""
+        """Clone events from source buckets by count or time range, filter AFK intervals, and classify."""
         threshold = (
             confidence_threshold
             if confidence_threshold is not None
             else self.confidence_threshold
         )
+
+        # Resolve time range bounds if requested (e.g. today, 24h, 7d, 30d, all)
+        start_iso, end_iso = resolve_time_range(
+            time_range=time_range,
+            start_time=start_time,
+            end_time=end_time,
+        )
+
+        # If a time range was requested and limit was default 150, fetch all events in range (limit=0)
+        fetch_limit = limit_per_bucket
+        if (
+            start_iso
+            or end_iso
+            or (time_range and time_range.lower() in ("today", "24h", "last_day", "7d", "last_week", "30d", "last_month", "all"))
+        ) and limit_per_bucket == 150:
+            fetch_limit = 0
 
         # Step 1: Ensure target bucket exists
         self.aw_client.create_bucket(
@@ -74,7 +98,12 @@ class ClassificationPipeline:
 
         for source_id in source_bucket_ids:
             try:
-                events = self.aw_client.get_events(source_id, limit=limit_per_bucket)
+                events = self.aw_client.get_events(
+                    source_id,
+                    limit=fetch_limit,
+                    start=start_iso,
+                    end=end_iso,
+                )
             except Exception as e:
                 logger.error(f"Failed to fetch events from {source_id}: {e}")
                 continue
@@ -304,6 +333,10 @@ class ClassificationPipeline:
         stats = {
             "target_bucket_id": target_bucket_id,
             "source_buckets": source_bucket_ids,
+            "time_range": time_range or "count",
+            "start_time": start_iso,
+            "end_time": end_iso,
+            "limit_per_bucket": fetch_limit,
             "afk_filtering_enabled": filter_afk,
             "afk_buckets_used": sorted(list(afk_buckets_used)),
             "total_raw_events_fetched": total_raw_events,

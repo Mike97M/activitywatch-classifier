@@ -134,3 +134,41 @@ def test_pipeline_with_afk_filtering():
         assert stats["total_events_processed"] == 1  # Only the active one was processed
         assert stats["events_saved_to_new_bucket"] == 1
 
+
+def test_pipeline_with_time_range():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model_path = Path(tmpdir) / "model.joblib"
+        data_path = Path(tmpdir) / "data.jsonl"
+
+        mock_aw = MagicMock()
+        mock_aw.create_bucket.return_value = {"id": "test-target", "created": True}
+        mock_aw.get_events.return_value = [
+            {
+                "timestamp": "2026-11-06T08:00:00Z",
+                "duration": 60.0,
+                "data": {"app": "Code", "title": "main.py"},
+            }
+        ]
+        mock_aw.insert_events.side_effect = lambda bucket_id, evs: evs
+
+        classifier = FastClassifier(model_path=model_path, training_data_path=data_path)
+        oracle = GemmaOracle(backend="heuristic")
+        pipeline = ClassificationPipeline(aw_client=mock_aw, classifier=classifier, gemma_oracle=oracle)
+
+        stats = pipeline.run(
+            source_bucket_ids=["aw-watcher-window_laptop"],
+            target_bucket_id="test-target",
+            time_range="24h",
+            filter_afk=False,
+        )
+
+        assert stats["time_range"] == "24h"
+        assert stats["start_time"] is not None
+        assert stats["end_time"] is not None
+        assert stats["total_events_processed"] == 1
+
+        # Check mock_aw.get_events was called with start and end
+        args, kwargs = mock_aw.get_events.call_args
+        assert kwargs.get("start") is not None
+        assert kwargs.get("end") is not None
+

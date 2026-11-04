@@ -219,6 +219,9 @@ async function runPipeline() {
   const sourceBucketIds = Array.from(checkboxes).map((cb) => cb.value);
   const targetBucketId = document.getElementById("target-bucket-id").value.trim() || "aw-classifier-categorized";
   const limit = parseInt(document.getElementById("limit-per-bucket").value, 10);
+  const timeRange = document.getElementById("select-time-range")
+    ? document.getElementById("select-time-range").value
+    : "count";
   const threshold = parseFloat(document.getElementById("confidence-threshold-slider").value);
   const filterAfk = document.getElementById("toggle-filter-afk")
     ? document.getElementById("toggle-filter-afk").checked
@@ -255,6 +258,7 @@ async function runPipeline() {
         source_bucket_ids: sourceBucketIds,
         target_bucket_id: targetBucketId,
         limit_per_bucket: limit,
+        time_range: timeRange,
         confidence_threshold: threshold,
         filter_afk: filterAfk,
         collect_training_data: collectTraining,
@@ -573,6 +577,23 @@ function setupEventListeners() {
   document.getElementById("btn-run-pipeline").addEventListener("click", runPipeline);
   document.getElementById("btn-refresh-buckets").addEventListener("click", fetchBuckets);
   document.getElementById("btn-refresh-events").addEventListener("click", () => loadTargetEvents());
+
+  // Scope / Time Range Change Handler
+  const timeRangeSelect = document.getElementById("select-time-range");
+  const limitSelect = document.getElementById("limit-per-bucket");
+  const limitLabel = document.getElementById("limit-label");
+  if (timeRangeSelect && limitSelect) {
+    timeRangeSelect.addEventListener("change", (e) => {
+      const val = e.target.value;
+      if (val !== "count") {
+        if (limitLabel) limitLabel.textContent = "Max Limit (0 = All in Period)";
+        limitSelect.value = "0";
+      } else {
+        if (limitLabel) limitLabel.textContent = "Limit per Source";
+        limitSelect.value = "150";
+      }
+    });
+  }
 
   // Manual Git Commit Button
   const btnGitCommit = document.getElementById("btn-manual-git-commit");

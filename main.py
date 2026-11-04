@@ -92,6 +92,22 @@ def main():
         default=False,
         help="Automatically commit updated training data to Git (default: False)",
     )
+    run_parser.add_argument(
+        "--time-range",
+        choices=["24h", "today", "7d", "week", "30d", "month", "all"],
+        default=None,
+        help="Time window: 24h/day, today, 7d/week, 30d/month, all (overrides count limit)",
+    )
+    run_parser.add_argument(
+        "--start",
+        default=None,
+        help="Custom start ISO-8601 timestamp (e.g. 2026-11-01T00:00:00Z)",
+    )
+    run_parser.add_argument(
+        "--end",
+        default=None,
+        help="Custom end ISO-8601 timestamp (e.g. 2026-11-06T00:00:00Z)",
+    )
 
     # Status command
     status_parser = subparsers.add_parser("status", help="Show ActivityWatch & Classifier status")
@@ -121,6 +137,22 @@ def main():
         type=int,
         default=25,
         help="Number of recent events to display (default: 25)",
+    )
+    view_parser.add_argument(
+        "--time-range",
+        choices=["24h", "today", "7d", "week", "30d", "month", "all"],
+        default=None,
+        help="Filter viewed activities by time window: 24h, today, 7d, 30d, all",
+    )
+    view_parser.add_argument(
+        "--start",
+        default=None,
+        help="Custom start ISO-8601 timestamp",
+    )
+    view_parser.add_argument(
+        "--end",
+        default=None,
+        help="Custom end ISO-8601 timestamp",
     )
 
     # Download Gemma command
@@ -244,6 +276,12 @@ def main():
         print(f"  AFK Guard:      {'Enabled' if args.filter_afk else 'Disabled'}")
         if args.afk_bucket:
             print(f"  AFK Bucket:     {args.afk_bucket}")
+        if args.time_range:
+            print(f"  Time Window:    {args.time_range}")
+        if args.start:
+            print(f"  Start Time:     {args.start}")
+        if args.end:
+            print(f"  End Time:       {args.end}")
         print(f"  Gemma Backend:  {args.backend}")
         print(f"  Auto-Expand:    {args.collect_training_data}")
         print(f"  Auto-Commit:    {args.auto_commit}\n")
@@ -254,6 +292,9 @@ def main():
             source_bucket_ids=args.source,
             target_bucket_id=args.target,
             limit_per_bucket=args.limit,
+            time_range=args.time_range,
+            start_time=args.start,
+            end_time=args.end,
             confidence_threshold=args.threshold,
             filter_afk=args.filter_afk,
             afk_bucket_id=args.afk_bucket,
@@ -296,9 +337,17 @@ def main():
                 print(f"Run the classifier pipeline first: uv run python main.py run -s <source-bucket>")
                 return
 
-            events = client.get_events(target, limit=limit)
+            from afk_filter import resolve_time_range
+            v_start, v_end = resolve_time_range(
+                time_range=args.time_range,
+                start_time=args.start,
+                end_time=args.end,
+            )
+            v_limit = 0 if (args.time_range and args.time_range != "count" and limit == 25) else limit
+            events = client.get_events(target, limit=v_limit, start=v_start, end=v_end)
             if not events:
-                print(f"Bucket '{target}' exists but contains no categorized events.")
+                time_desc = f" within '{args.time_range}'" if args.time_range else ""
+                print(f"Bucket '{target}' exists but contains no categorized events{time_desc}.")
                 return
 
             # Compute category and subcategory breakdown

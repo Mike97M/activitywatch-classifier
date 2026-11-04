@@ -7,6 +7,7 @@ from afk_filter import (
     filter_period_intersect,
     merge_intervals,
     parse_iso_timestamp,
+    resolve_time_range,
     to_iso_timestamp,
 )
 from aw_client import AWClient
@@ -156,3 +157,34 @@ def test_find_afk_bucket_for_source(monkeypatch):
 
     assert client.find_afk_bucket_for_source("aw-watcher-window_fedora") == "aw-watcher-afk_fedora"
     assert client.find_afk_bucket_for_source("aw-watcher-web-firefox_laptop") == "aw-watcher-afk_laptop"
+
+
+def test_resolve_time_range():
+    ref_time = datetime(2026, 11, 6, 15, 30, 0, tzinfo=timezone.utc)
+
+    # Count / none
+    assert resolve_time_range("count") == (None, None)
+    assert resolve_time_range("all") == (None, None)
+
+    # Today
+    s_today, e_today = resolve_time_range("today", now=ref_time)
+    assert s_today == "2026-11-06T00:00:00Z"
+    assert e_today == "2026-11-06T15:30:00Z"
+
+    # 24h / last_day
+    s_24h, e_24h = resolve_time_range("24h", now=ref_time)
+    assert s_24h == "2026-11-05T15:30:00Z"
+    assert e_24h == "2026-11-06T15:30:00Z"
+
+    # 7d / last_week
+    s_7d, e_7d = resolve_time_range("7d", now=ref_time)
+    assert s_7d == "2026-10-30T15:30:00Z"
+
+    # 30d / last_month
+    s_30d, e_30d = resolve_time_range("30d", now=ref_time)
+    assert s_30d == "2026-10-07T15:30:00Z"
+
+    # Custom start and end
+    custom_s, custom_e = resolve_time_range(start_time="2026-11-01T08:00:00Z", end_time="2026-11-02T12:00:00Z")
+    assert custom_s == "2026-11-01T08:00:00Z"
+    assert custom_e == "2026-11-02T12:00:00Z"
