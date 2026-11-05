@@ -37,9 +37,12 @@ def get_training_data_status(
             sample_count = sum(1 for line in f if line.strip())
 
     # 2. Check git status
+    ignore_proc = run_git(["check-ignore", "-q", rel_path])
+    is_gitignored = (ignore_proc.returncode == 0)
+
     proc = run_git(["status", "--porcelain", rel_path])
     porcelain = proc.stdout.strip()
-    is_modified = bool(porcelain)
+    is_modified = bool(porcelain) and not is_gitignored
 
     # 3. Last commit touching training_data.jsonl
     log_proc = run_git(["log", "-n", "1", "--oneline", "--", rel_path])
@@ -50,8 +53,9 @@ def get_training_data_status(
         "file": rel_path,
         "sample_count": sample_count,
         "is_modified_or_untracked": is_modified,
-        "status_code": porcelain[:2] if porcelain else "clean",
-        "last_commit": last_commit,
+        "status_code": "ignored" if is_gitignored else (porcelain[:2] if porcelain else "clean"),
+        "is_gitignored": is_gitignored,
+        "last_commit": "Purged from Git history (private local)" if is_gitignored else last_commit,
         "commit_hash": commit_hash,
     }
 
@@ -78,6 +82,17 @@ def commit_training_data(
     # Count samples
     with open(target_path, "r", encoding="utf-8") as f:
         sample_count = sum(1 for line in f if line.strip())
+
+    # Check if file is gitignored per user privacy requirement
+    ignore_proc = run_git(["check-ignore", "-q", rel_path])
+    if ignore_proc.returncode == 0:
+        return {
+            "success": True,
+            "committed": False,
+            "message": "Training data is strictly local and gitignored for privacy.",
+            "sample_count": sample_count,
+            "is_gitignored": True,
+        }
 
     # Stage the training data file
     add_proc = run_git(["add", rel_path])

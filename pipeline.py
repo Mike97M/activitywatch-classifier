@@ -49,6 +49,7 @@ class ClassificationPipeline:
         end_time: Optional[str] = None,
         confidence_threshold: Optional[float] = None,
         filter_afk: bool = True,
+        include_audible: bool = True,
         afk_bucket_id: Optional[str] = None,
         progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
         collect_training_data: bool = True,
@@ -97,6 +98,8 @@ class ClassificationPipeline:
         gemma_calls = 0
         new_training_samples = 0
         afk_buckets_used: Set[str] = set()
+        audible_buckets_used: Set[str] = set()
+        web_events_cache: Dict[str, List[Dict[str, Any]]] = {}
         category_distribution: Dict[str, int] = {}
         subcategory_distribution: Dict[str, int] = {}
         classified_events_to_insert: List[Dict[str, Any]] = []
@@ -134,7 +137,20 @@ class ClassificationPipeline:
                         "message": f"Filtering idle/AFK periods for {source_id}...",
                         "percent": round(5.0 + ((idx + 0.5) / max(1, len(source_bucket_ids))) * 15.0, 1),
                     })
-                matched_afk = afk_bucket_id or self.aw_client.find_afk_bucket_for_source(source_id)
+                # Per-device AFK resolution:
+                # If afk_bucket_id is provided, ensure it belongs to the same device/hostname,
+                # otherwise resolve strictly for this device to prevent phone events from being filtered by laptop AFK.
+                if afk_bucket_id and afk_bucket_id.lower() not in ("auto", "none", ""):
+                    source_info = self.aw_client.list_buckets().get(source_id, {})
+                    afk_info = self.aw_client.list_buckets().get(afk_bucket_id, {})
+                    s_host = source_info.get("hostname", "")
+                    a_host = afk_info.get("hostname", "")
+                    if s_host and a_host and s_host != a_host:
+                        matched_afk = self.aw_client.find_afk_bucket_for_source(source_id)
+                    else:
+                        matched_afk = afk_bucket_id
+                else:
+                    matched_afk = self.aw_client.find_afk_bucket_for_source(source_id)
                 if matched_afk:
                     try:
                         min_time = min(parse_iso_timestamp(ev["timestamp"]) for ev in events)
@@ -149,14 +165,37 @@ class ClassificationPipeline:
                         afk_events = self.aw_client.get_events(
                             matched_afk, start=buf_start, end=buf_end, limit=0
                         )
-                        if afk_events:
-                            events = filter_events_by_afk(events, afk_events)
+
+                        # Audible tab consideration: tabs playing audio (except background music) count as active
+                        audible_candidate_events: List[Dict[str, Any]] = []
+                        if include_audible:
+                            web_buckets = self.aw_client.find_web_buckets_for_source(source_id)
+                            for wb in web_buckets:
+                                if wb not in web_events_cache:
+                                    try:
+                                        wb_evs = self.aw_client.get_events(
+                                            wb, start=buf_start, end=buf_end, limit=0
+                                        )
+                                        web_events_cache[wb] = wb_evs
+                                    except Exception as e:
+                                        logger.warning(f"Could not fetch web events from {wb}: {e}")
+                                        web_events_cache[wb] = []
+                                audible_candidate_events.extend(web_events_cache[wb])
+                                audible_buckets_used.add(wb)
+
+                        if afk_events or audible_candidate_events:
+                            events = filter_events_by_afk(
+                                events,
+                                afk_events,
+                                audible_events=audible_candidate_events,
+                                include_audible=include_audible,
+                            )
                             afk_buckets_used.add(matched_afk)
                             dropped = raw_event_count - len(events)
                             if dropped > 0:
                                 total_afk_filtered += dropped
                                 logger.info(
-                                    f"AFK Guard: filtered out {dropped} idle/AFK events from {source_id} using {matched_afk}"
+                                    f"AFK Guard: filtered out {dropped} idle/AFK events from {source_id} using {matched_afk} (include_audible={include_audible})"
                                 )
                         else:
                             logger.warning(
@@ -176,7 +215,12 @@ class ClassificationPipeline:
         logger.info(f"Total active events to classify across {len(source_bucket_ids)} buckets: {total_to_classify}")
 
         # Step 3: Classify events
-        for source_id, event in all_events_to_classify:
+        # Pass 1: FastClassifier inference & grouping activities needing Gemma
+        event_records: List[Dict[str, Any]] = []
+        events_needing_gemma: Dict[Tuple[str, str, str], List[int]] = {}
+        gemma_sig_features: Dict[Tuple[str, str, str], str] = {}
+
+        for idx, (source_id, event) in enumerate(all_events_to_classify):
             raw_data = event.get("data", {})
             clean_data = anonymizer.sanitize_event_data(raw_data)
             app = clean_data.get("app", "")
@@ -199,86 +243,120 @@ class ClassificationPipeline:
 
             title = clean_data.get("title", "")
             url = clean_data.get("url", "")
-
             feature_text = self.classifier.extract_features(clean_data)
 
-            # Attempt fast hierarchical prediction
+            # Fast hierarchical prediction
             pred_cat, pred_subcat, pred_full, confidence, prob_dict = (
                 self.classifier.predict_hierarchy(feature_text)
             )
 
-            # If confidence is lower than threshold, call Gemma
-            if confidence < threshold:
-                gemma_res = self.gemma_oracle.classify_activity(
-                    app=app,
-                    title=title,
-                    url=url,
-                    taxonomy=self.classifier.taxonomy,
-                )
-                chosen_category = gemma_res.get("category", "Uncategorized")
-                chosen_subcategory = gemma_res.get("subcategory", "General Activity")
-                chosen_full = gemma_res.get(
-                    "full_category", f"{chosen_category} > {chosen_subcategory}"
-                )
-                chosen_confidence = float(gemma_res.get("confidence", 0.95))
-                classified_by = f"gemma_e2b ({gemma_res.get('backend', 'oracle')})"
-                reasoning = gemma_res.get("reasoning", "")
-                gemma_calls += 1
+            rec = {
+                "source_id": source_id,
+                "event": event,
+                "clean_data": clean_data,
+                "app": app,
+                "title": title,
+                "url": url,
+                "feature_text": feature_text,
+                "chosen_category": pred_cat,
+                "chosen_subcategory": pred_subcat,
+                "chosen_full": pred_full,
+                "chosen_confidence": confidence,
+                "classified_by": "fast_classifier",
+                "reasoning": f"High confidence prediction ({confidence:.2f})",
+                "needs_gemma": False,
+            }
 
-                # Add new training sample if enabled (deferred retrain for batch speed)
+            if confidence < threshold:
+                rec["needs_gemma"] = True
+                sig = (app, title, url)
+                events_needing_gemma.setdefault(sig, []).append(idx)
+                gemma_sig_features[sig] = feature_text
+
+            event_records.append(rec)
+
+        # Pass 2: Batch Gemma multi-stream parallel decoding for unique signatures
+        unique_sigs = list(events_needing_gemma.keys())
+        if unique_sigs:
+            total_gemma_events = sum(len(indices) for indices in events_needing_gemma.values())
+            logger.info(
+                f"Batching {len(unique_sigs)} unique activity signatures across {total_gemma_events} events "
+                f"to Gemma Oracle using multi-stream parallel decoding..."
+            )
+            activities_to_batch = [
+                {"id": i, "app": sig[0], "title": sig[1], "url": sig[2]}
+                for i, sig in enumerate(unique_sigs)
+            ]
+
+            if progress_callback:
+                progress_callback({
+                    "step": "gemma_batch",
+                    "message": f"Evaluating {len(unique_sigs)} unique activities with Gemma multi-stream parallel decoding...",
+                    "percent": 30.0,
+                })
+
+            gemma_results = self.gemma_oracle.classify_batch(
+                activities_to_batch, taxonomy=self.classifier.taxonomy, max_streams=8
+            )
+
+            for sig, gemma_res in zip(unique_sigs, gemma_results):
+                cat = gemma_res.get("category", "Uncategorized")
+                sub = gemma_res.get("subcategory", "General Activity")
+                full = gemma_res.get("full_category", f"{cat} > {sub}")
+                conf = float(gemma_res.get("confidence", 0.95))
+                backend_info = gemma_res.get("backend", "oracle")
+                by = f"gemma_e2b ({backend_info})"
+                reas = gemma_res.get("reasoning", "")
+                
+                feat_text = gemma_sig_features[sig]
+                # Collect training samples ONLY from Gemma Oracle (never fast_classifier)
                 if collect_training_data:
                     added = self.classifier.add_training_sample(
-                        feature_text=feature_text,
-                        category=chosen_category,
-                        subcategory=chosen_subcategory,
+                        feature_text=feat_text,
+                        category=cat,
+                        subcategory=sub,
                         source="gemma_e2b",
                         retrain_now=False,
                     )
                     if added:
                         new_training_samples += 1
-            else:
-                chosen_category = pred_cat
-                chosen_subcategory = pred_subcat
-                chosen_full = pred_full
-                chosen_confidence = confidence
-                classified_by = "fast_classifier"
-                reasoning = f"High confidence prediction ({confidence:.2f})"
+
+                # Apply to all events sharing this exact signature
+                event_indices = events_needing_gemma[sig]
+                gemma_calls += len(event_indices)
+                for e_idx in event_indices:
+                    r = event_records[e_idx]
+                    r["chosen_category"] = cat
+                    r["chosen_subcategory"] = sub
+                    r["chosen_full"] = full
+                    r["chosen_confidence"] = conf
+                    r["classified_by"] = by
+                    r["reasoning"] = reas
+
+        # Pass 3: Assemble results and statistics
+        for idx, rec in enumerate(event_records):
+            if not rec["needs_gemma"]:
                 fast_calls += 1
 
-                # Collect novel confident activities to continually expand training dataset
-                if collect_training_data and confidence >= 0.70:
-                    added = self.classifier.add_training_sample(
-                        feature_text=feature_text,
-                        category=chosen_category,
-                        subcategory=chosen_subcategory,
-                        source="fast_classifier",
-                        retrain_now=False,
-                    )
-                    if added:
-                        new_training_samples += 1
-
-            category_distribution[chosen_category] = (
-                category_distribution.get(chosen_category, 0) + 1
-            )
-            subcategory_distribution[chosen_full] = (
-                subcategory_distribution.get(chosen_full, 0) + 1
-            )
+            cat = rec["chosen_category"]
+            full = rec["chosen_full"]
+            category_distribution[cat] = category_distribution.get(cat, 0) + 1
+            subcategory_distribution[full] = subcategory_distribution.get(full, 0) + 1
             total_processed += 1
 
-            # Construct the enriched non-destructive event for the target bucket
-            cloned_data = dict(clean_data)
-            cloned_data["category"] = chosen_category
-            cloned_data["subcategory"] = chosen_subcategory
-            cloned_data["full_category"] = chosen_full
-            cloned_data["category_hierarchy"] = [chosen_category, chosen_subcategory]
-            cloned_data["confidence"] = round(chosen_confidence, 4)
-            cloned_data["classified_by"] = classified_by
-            cloned_data["reasoning"] = reasoning
-            cloned_data["source_bucket"] = source_id
+            cloned_data = dict(rec["clean_data"])
+            cloned_data["category"] = cat
+            cloned_data["subcategory"] = rec["chosen_subcategory"]
+            cloned_data["full_category"] = full
+            cloned_data["category_hierarchy"] = [cat, rec["chosen_subcategory"]]
+            cloned_data["confidence"] = round(rec["chosen_confidence"], 4)
+            cloned_data["classified_by"] = rec["classified_by"]
+            cloned_data["reasoning"] = rec["reasoning"]
+            cloned_data["source_bucket"] = rec["source_id"]
 
             new_event = {
-                "timestamp": event.get("timestamp"),
-                "duration": event.get("duration", 0.0),
+                "timestamp": rec["event"].get("timestamp"),
+                "duration": rec["event"].get("duration", 0.0),
                 "data": cloned_data,
             }
             classified_events_to_insert.append(new_event)
@@ -286,22 +364,22 @@ class ClassificationPipeline:
             if len(recent_preview) < 50:
                 recent_preview.append(
                     {
-                        "timestamp": event.get("timestamp"),
-                        "duration": event.get("duration", 0.0),
-                        "app": app,
-                        "title": title,
-                        "url": url,
-                        "category": chosen_category,
-                        "subcategory": chosen_subcategory,
-                        "full_category": chosen_full,
-                        "confidence": round(chosen_confidence, 3),
-                        "classified_by": classified_by,
-                        "reasoning": reasoning,
-                        "source_bucket": source_id,
+                        "timestamp": rec["event"].get("timestamp"),
+                        "duration": rec["event"].get("duration", 0.0),
+                        "app": rec["app"],
+                        "title": rec["title"],
+                        "url": rec["url"],
+                        "category": cat,
+                        "subcategory": rec["chosen_subcategory"],
+                        "full_category": full,
+                        "confidence": round(rec["chosen_confidence"], 3),
+                        "classified_by": rec["classified_by"],
+                        "reasoning": rec["reasoning"],
+                        "source_bucket": rec["source_id"],
                     }
                 )
 
-            if progress_callback and (total_processed % 5 == 0 or total_processed == total_to_classify):
+            if progress_callback and (total_processed % 20 == 0 or total_processed == total_to_classify):
                 pct = 20.0 + (float(total_processed) / max(1, total_to_classify)) * 60.0
                 progress_callback(
                     {
@@ -309,12 +387,10 @@ class ClassificationPipeline:
                         "current": total_processed,
                         "total": total_to_classify,
                         "percent": round(pct, 1),
-                        "message": f"Classifying activities: {total_processed}/{total_to_classify} ({fast_calls} fast, {gemma_calls} Gemma)...",
+                        "message": f"Processed {total_processed}/{total_to_classify} activities ({fast_calls} fast, {gemma_calls} Gemma)...",
                         "processed": total_processed,
                         "fast_calls": fast_calls,
                         "gemma_calls": gemma_calls,
-                        "current_category": chosen_category,
-                        "current_subcategory": chosen_subcategory,
                     }
                 )
 
@@ -405,6 +481,8 @@ class ClassificationPipeline:
             "limit_per_bucket": fetch_limit,
             "afk_filtering_enabled": filter_afk,
             "afk_buckets_used": sorted(list(afk_buckets_used)),
+            "audible_filtering_enabled": include_audible,
+            "audible_buckets_used": sorted(list(audible_buckets_used)),
             "total_raw_events_fetched": total_raw_events,
             "afk_events_filtered_out": total_afk_filtered,
             "total_events_processed": total_processed,

@@ -58,3 +58,33 @@ def test_gemma_local_model_info_and_fallback():
     res = oracle.classify_activity(app="Code", title="test.py - Visual Studio Code", url="")
     assert res["category"] == "Development"
     assert res["confidence"] >= 0.9
+
+
+def test_gemma_batch_classification():
+    oracle = GemmaOracle(backend="heuristic")
+    activities = [
+        {"app": "foot", "title": "user@laptop:~", "url": ""},
+        {"app": "brave", "title": "Pull Request #123 · github.com", "url": "https://github.com/ActivityWatch/activitywatch/pull/123"},
+        {"app": "thunderbird", "title": "Inbox (3 unread)", "url": ""},
+    ]
+    results = oracle.classify_batch(activities)
+    assert len(results) == 3
+    assert results[0]["category"] == "Development"
+    assert results[0]["subcategory"] == "DevOps & Terminal"
+    assert results[1]["category"] == "Development"
+    assert results[1]["subcategory"] == "Git & Code Review"
+    assert results[2]["category"] == "Communication"
+    assert results[2]["subcategory"] == "Email"
+
+
+def test_terminal_emulator_heuristics():
+    oracle = GemmaOracle(backend="heuristic")
+    # Foot with user@laptop
+    res = oracle.classify_activity(app="foot", title="<USER>@laptop:~", url="")
+    assert res["category"] == "Development"
+    assert res["subcategory"] == "DevOps & Terminal"
+
+    # Terminal running btop should be hardware monitor
+    res_btop = oracle.classify_activity(app="foot", title="btop", url="")
+    assert res_btop["category"] == "System & Admin"
+    assert res_btop["subcategory"] == "Hardware & System Monitor"

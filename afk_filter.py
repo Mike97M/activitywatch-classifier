@@ -209,31 +209,169 @@ def filter_period_intersect(
     return results
 
 
+EXCLUDED_MUSIC_DOMAINS = (
+    "music.youtube.com",
+    "spotify.com",
+    "open.spotify.com",
+    "play.spotify.com",
+    "soundcloud.com",
+    "deezer.com",
+    "tidal.com",
+    "listen.tidal.com",
+    "music.apple.com",
+    "bandcamp.com",
+    "pandora.com",
+    "music.amazon.",
+    "qobuz.com",
+    "tunein.com",
+    "iheart.com",
+    "mixcloud.com",
+    "audiomack.com",
+    "last.fm",
+    "di.fm",
+)
+
+EXCLUDED_MUSIC_TITLE_PHRASES = (
+    "youtube music",
+    "spotify",
+    "soundcloud",
+    "deezer",
+    "tidal",
+    "apple music",
+    "amazon music",
+    "bandcamp",
+    "pandora",
+)
+
+EXCLUDED_MUSIC_APPS = (
+    "spotify",
+    "deezer",
+    "tidal",
+    "apple music",
+    "youtube music",
+)
+
+
+def is_excluded_music(data: Dict[str, Any]) -> bool:
+    """Return True if activity is from a background music service (e.g. Spotify, YouTube Music).
+
+    These background audio streams should NOT exempt the user from AFK detection,
+    allowing idle/sleep periods while listening to music to properly register as AFK.
+    """
+    if not data:
+        return False
+
+    url = str(data.get("url") or "").lower()
+    title = str(data.get("title") or "").lower()
+    app = str(data.get("app") or "").lower()
+
+    # 1. URL domain check
+    if url:
+        for domain in EXCLUDED_MUSIC_DOMAINS:
+            if domain in url:
+                return True
+
+    # 2. Title phrase check
+    if title:
+        for phrase in EXCLUDED_MUSIC_TITLE_PHRASES:
+            if phrase in title:
+                return True
+
+    # 3. Dedicated desktop music player check
+    if app:
+        for app_name in EXCLUDED_MUSIC_APPS:
+            if app_name in app:
+                return True
+
+    return False
+
+
+def is_audible_non_afk(event: Dict[str, Any]) -> bool:
+    """Return True if an event represents active audible media (e.g. movies, videos, streams).
+
+    Must have `audible: True` and NOT be an excluded background music service.
+    """
+    data = event.get("data", {})
+    if data.get("audible") is not True:
+        return False
+    if is_excluded_music(data):
+        return False
+    return True
+
+
+def extract_audible_non_afk_intervals(
+    events: List[Dict[str, Any]],
+    pulsetime: float = 65.0,
+) -> List[Dict[str, Any]]:
+    """Extract audible non-music events and convert them to not-afk intervals.
+
+    ActivityWatch web watcher heartbeats typically have duration 0.0 with ~60s intervals.
+    Sub-pulsetime durations are expanded to pulsetime (default 65.0s) so consecutive
+    heartbeats merge seamlessly into uninterrupted media watching periods.
+    """
+    if not events:
+        return []
+
+    intervals: List[Dict[str, Any]] = []
+    for ev in events:
+        if is_audible_non_afk(ev):
+            raw_dur = max(0.0, float(ev.get("duration", 0.0)))
+            dur = max(raw_dur, pulsetime)
+            intervals.append({
+                "timestamp": ev["timestamp"],
+                "duration": dur,
+                "data": {
+                    "status": "not-afk",
+                    "audible": True,
+                    "title": ev.get("data", {}).get("title"),
+                    "url": ev.get("data", {}).get("url"),
+                },
+            })
+    return intervals
+
+
 def filter_events_by_afk(
     events: List[Dict[str, Any]],
     afk_events: List[Dict[str, Any]],
+    audible_events: Optional[List[Dict[str, Any]]] = None,
+    include_audible: bool = True,
 ) -> List[Dict[str, Any]]:
-    """Filter raw activity events against raw AFK bucket events, keeping only non-AFK activities."""
+    """Filter raw activity events against raw AFK bucket events, keeping only non-AFK activities.
+
+    If include_audible is True, browser tabs actively playing audio (e.g. YouTube videos,
+    movies, Netflix, Twitch) are treated as active (not-afk) even without keyboard/mouse input,
+    while background music services (Spotify, YouTube Music, Deezer, etc.) are excluded.
+    """
     if not events:
         return []
-    if not afk_events:
+
+    # 1. Collect standard not-afk intervals from AFK watcher
+    not_afk: List[Dict[str, Any]] = []
+    if afk_events:
+        has_afk_status = any(
+            ev.get("data", {}).get("status") in ("not-afk", "afk")
+            for ev in afk_events
+        )
+        if has_afk_status:
+            not_afk.extend([
+                ev for ev in afk_events
+                if ev.get("data", {}).get("status") == "not-afk"
+            ])
+        else:
+            logger.warning(
+                "AFK events list does not contain 'status' ('not-afk' or 'afk'); skipping AFK status filtering."
+            )
+
+    # 2. Collect audible media intervals if enabled
+    if include_audible:
+        if audible_events:
+            not_afk.extend(extract_audible_non_afk_intervals(audible_events))
+        # Also check source events in case the source itself is a browser watcher
+        not_afk.extend(extract_audible_non_afk_intervals(events))
+
+    # If no not-afk intervals exist and no afk events were provided, keep events
+    if not not_afk and not afk_events:
         logger.warning("Empty AFK events list provided; cannot perform AFK filtering.")
         return events
-
-    # Verify that the stream actually contains AFK status indicators
-    has_afk_status = any(
-        ev.get("data", {}).get("status") in ("not-afk", "afk")
-        for ev in afk_events
-    )
-    if not has_afk_status:
-        logger.warning(
-            "AFK events list does not contain 'status' ('not-afk' or 'afk'); skipping AFK filtering."
-        )
-        return events
-
-    not_afk = [
-        ev for ev in afk_events
-        if ev.get("data", {}).get("status") == "not-afk"
-    ]
 
     return filter_period_intersect(events, not_afk)

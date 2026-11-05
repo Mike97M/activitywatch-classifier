@@ -111,7 +111,13 @@ async function fetchStatus() {
     const gitInfo = document.getElementById("git-last-commit-info");
     if (gitBadge && data.git_status) {
       const gs = data.git_status;
-      if (gs.is_modified_or_untracked) {
+      if (gs.is_gitignored) {
+        gitBadge.className = "px-1.5 py-0.5 rounded text-[9px] font-mono bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-300 dark:border-slate-700";
+        gitBadge.textContent = "Local Private";
+        if (gitInfo) {
+          gitInfo.textContent = "Excluded from Git (private local dataset)";
+        }
+      } else if (gs.is_modified_or_untracked) {
         gitBadge.className = "px-1.5 py-0.5 rounded text-[9px] font-mono bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-300 border border-amber-300 dark:border-amber-800";
         gitBadge.textContent = "Git: Uncommitted";
       } else {
@@ -119,7 +125,7 @@ async function fetchStatus() {
         gitBadge.className = "px-1.5 py-0.5 rounded text-[9px] font-mono bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800";
         gitBadge.textContent = `Git: ${shortHash}`;
       }
-      if (gitInfo && gs.last_commit) {
+      if (gitInfo && gs.last_commit && !gs.is_gitignored) {
         gitInfo.textContent = gs.last_commit;
       }
     }
@@ -191,10 +197,27 @@ async function fetchBuckets() {
     }
 
     container.innerHTML = "";
-    for (const [bid, binfo] of Object.entries(buckets)) {
+    const sourceCandidates = data.source_buckets || buckets;
+
+    for (const [bid, binfo] of Object.entries(sourceCandidates)) {
       // Don't show current target bucket as source candidate to avoid recursive self-cloning
-      const targetId = document.getElementById("target-bucket-id").value;
+      const targetId = document.getElementById("target-bucket-id") ? document.getElementById("target-bucket-id").value : "";
       if (bid === targetId) continue;
+
+      // Filter out any classified buckets created by our app
+      const bLower = bid.toLowerCase();
+      const isClassified =
+        bLower.includes("classified") ||
+        bLower.includes("classifier") ||
+        binfo.client === "aw-gemma-classifier" ||
+        binfo.client === "aw-classifier" ||
+        binfo.type === "app.classified.activities" ||
+        binfo.hostname === "classified";
+      if (isClassified) continue;
+
+      // Filter out AFK buckets (they are idle status trackers, not activities to copy)
+      const isAfk = binfo.type === "afkstatus" || bLower.includes("afk");
+      if (isAfk) continue;
 
       const isWindowOrWeb = bid.includes("window") || bid.includes("web");
       const client = binfo.client || "watcher";
@@ -442,6 +465,9 @@ async function runPipeline() {
   const filterAfk = document.getElementById("toggle-filter-afk")
     ? document.getElementById("toggle-filter-afk").checked
     : true;
+  const includeAudible = document.getElementById("toggle-include-audible")
+    ? document.getElementById("toggle-include-audible").checked
+    : true;
   const collectTraining = document.getElementById("toggle-collect-training")
     ? document.getElementById("toggle-collect-training").checked
     : true;
@@ -481,6 +507,7 @@ async function runPipeline() {
         time_range: timeRange,
         confidence_threshold: threshold,
         filter_afk: filterAfk,
+        include_audible: includeAudible,
         collect_training_data: collectTraining,
         auto_commit_git: autoCommit,
       }),

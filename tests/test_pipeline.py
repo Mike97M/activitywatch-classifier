@@ -172,3 +172,159 @@ def test_pipeline_with_time_range():
         assert kwargs.get("start") is not None
         assert kwargs.get("end") is not None
 
+
+def test_pipeline_no_fast_classifier_training_samples():
+    """Verify that training samples are ONLY added by Gemma/user, never by fast_classifier."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model_path = Path(tmpdir) / "model.joblib"
+        data_path = Path(tmpdir) / "data.jsonl"
+
+        mock_aw = MagicMock()
+        mock_aw.create_bucket.return_value = {"id": "test-target", "created": True}
+        mock_aw.find_afk_bucket_for_source.return_value = None
+        mock_aw.get_events.return_value = [
+            {"timestamp": "2026-11-06T08:00:00Z", "duration": 60.0, "data": {"app": "foot", "title": "user@laptop:~"}},
+        ]
+        mock_aw.insert_events.side_effect = lambda bucket_id, evs: evs
+
+        classifier = FastClassifier(model_path=model_path, training_data_path=data_path)
+        # Pre-seed classifier with at least 2 classes so logistic regression can fit
+        classifier.add_training_sample("app:foot domain: root_domain: path: title:<user>@laptop:~ url:", "Development", "DevOps & Terminal", source="gemma_e2b")
+        classifier.add_training_sample("app:firefox domain:google.com root_domain:google.com path:search title:google search url:https://google.com", "Browsing & Research", "Search & Exploration", source="gemma_e2b")
+        retrained = classifier.retrain_full()
+        assert retrained is True
+        assert classifier.is_trained is True
+        initial_samples_count = len(classifier.training_samples)
+
+        oracle = GemmaOracle(backend="heuristic")
+        pipeline = ClassificationPipeline(aw_client=mock_aw, classifier=classifier, gemma_oracle=oracle, confidence_threshold=0.3)
+
+        stats = pipeline.run(
+            source_bucket_ids=["aw-watcher-window_laptop"],
+            target_bucket_id="test-target",
+            collect_training_data=True,
+            filter_afk=False,
+        )
+
+        assert stats["fast_classifier_calls"] == 1
+        assert stats["gemma_oracle_calls"] == 0
+        # No new samples added by fast_classifier
+        assert len(classifier.training_samples) == initial_samples_count
+        assert not any(s.get("source") == "fast_classifier" for s in classifier.training_samples)
+
+
+def test_pipeline_device_afk_isolation():
+    """Verify that phone activities are not filtered by laptop AFK status."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model_path = Path(tmpdir) / "model.joblib"
+        data_path = Path(tmpdir) / "data.jsonl"
+
+        mock_aw = MagicMock()
+        mock_aw.create_bucket.return_value = {"id": "test-target", "created": True}
+        mock_aw.list_buckets.return_value = {
+            "aw-watcher-android-synced-from-oneplus_12": {"hostname": "oneplus_12", "type": "currentwindow"},
+            "aw-watcher-afk_laptop": {"hostname": "laptop", "type": "afkstatus"},
+        }
+        # Phone has no AFK bucket
+        mock_aw.find_afk_bucket_for_source.side_effect = lambda bid: None if "oneplus" in bid else "aw-watcher-afk_laptop"
+        mock_aw.get_events.return_value = [
+            {"timestamp": "2026-11-06T08:00:00Z", "duration": 60.0, "data": {"app": "com.android.chrome", "title": "Mobile News"}},
+        ]
+        mock_aw.insert_events.side_effect = lambda bucket_id, evs: evs
+
+        classifier = FastClassifier(model_path=model_path, training_data_path=data_path)
+        oracle = GemmaOracle(backend="heuristic")
+        pipeline = ClassificationPipeline(aw_client=mock_aw, classifier=classifier, gemma_oracle=oracle)
+
+        stats = pipeline.run(
+            source_bucket_ids=["aw-watcher-android-synced-from-oneplus_12"],
+            target_bucket_id="test-target",
+            filter_afk=True,
+        )
+
+        assert stats["afk_events_filtered_out"] == 0
+        assert stats["total_events_processed"] == 1
+        assert "aw-watcher-afk_laptop" not in stats["afk_buckets_used"]
+
+
+def test_pipeline_audible_tab_afk_exception():
+    """Verify that tabs playing video/movies exempt user from AFK during pipeline run."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model_path = Path(tmpdir) / "model.joblib"
+        data_path = Path(tmpdir) / "data.jsonl"
+
+        mock_aw = MagicMock()
+        mock_aw.create_bucket.return_value = {"id": "test-target", "created": True}
+        mock_aw.find_afk_bucket_for_source.return_value = "aw-watcher-afk_fedora"
+        mock_aw.find_web_buckets_for_source.return_value = ["aw-watcher-web-firefox_fedora"]
+        mock_aw.list_buckets.return_value = {
+            "aw-watcher-window_fedora": {"hostname": "fedora", "type": "currentwindow"},
+            "aw-watcher-afk_fedora": {"hostname": "fedora", "type": "afkstatus"},
+            "aw-watcher-web-firefox_fedora": {"hostname": "fedora", "type": "web.tab.current"},
+        }
+
+        def mock_get_events(bucket_id, **kwargs):
+            if "afk" in bucket_id:
+                # User had zero mouse/keyboard movement (100% AFK)
+                return [
+                    {
+                        "timestamp": "2026-11-05T12:00:00Z",
+                        "duration": 1800.0,
+                        "data": {"status": "afk"},
+                    }
+                ]
+            elif "web" in bucket_id:
+                # Web watcher reports YouTube video playing with audio for the first 20 minutes
+                return [
+                    {
+                        "timestamp": "2026-11-05T12:00:00Z",
+                        "duration": 1200.0,
+                        "data": {
+                            "audible": True,
+                            "url": "https://www.youtube.com/watch?v=doc123",
+                            "title": "Documentary - YouTube",
+                        },
+                    }
+                ]
+            else:
+                # Window watcher events
+                return [
+                    # Event 1: watching documentary (1200s) -> should be kept due to tab audio
+                    {
+                        "timestamp": "2026-11-05T12:00:00Z",
+                        "duration": 1200.0,
+                        "data": {"app": "Firefox", "title": "Documentary - YouTube"},
+                    },
+                    # Event 2: idle tab after video ended (600s) -> should be dropped as AFK
+                    {
+                        "timestamp": "2026-11-05T12:20:00Z",
+                        "duration": 600.0,
+                        "data": {"app": "Firefox", "title": "Blank Tab"},
+                    },
+                ]
+
+        mock_aw.get_events.side_effect = mock_get_events
+        mock_aw.insert_events.side_effect = lambda bucket_id, evs: evs
+
+        classifier = FastClassifier(model_path=model_path, training_data_path=data_path)
+        oracle = GemmaOracle(backend="heuristic")
+        pipeline = ClassificationPipeline(aw_client=mock_aw, classifier=classifier, gemma_oracle=oracle)
+
+        stats = pipeline.run(
+            source_bucket_ids=["aw-watcher-window_fedora"],
+            target_bucket_id="test-target",
+            filter_afk=True,
+            include_audible=True,
+        )
+
+        assert stats["afk_filtering_enabled"] is True
+        assert stats["audible_filtering_enabled"] is True
+        assert stats["total_raw_events_fetched"] == 2
+        assert stats["afk_events_filtered_out"] == 1
+        assert stats["total_events_processed"] == 1
+        assert stats["events_saved_to_new_bucket"] == 1
+        assert "aw-watcher-afk_fedora" in stats["afk_buckets_used"]
+        assert "aw-watcher-web-firefox_fedora" in stats["audible_buckets_used"]
+
+
+

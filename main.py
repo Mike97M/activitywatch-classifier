@@ -29,6 +29,12 @@ def main():
     serve_parser = subparsers.add_parser("serve", help="Launch Web UI and API server")
     serve_parser.add_argument("--host", default=WEB_HOST, help="Host to bind server")
     serve_parser.add_argument("--port", type=int, default=WEB_PORT, help="Port to bind server")
+    serve_parser.add_argument(
+        "--reload",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Enable auto-reload on code change (default: False)",
+    )
 
     # Run pipeline command
     run_parser = subparsers.add_parser("run", help="Run classification pipeline non-destructively")
@@ -74,6 +80,12 @@ def main():
         action=argparse.BooleanOptionalAction,
         default=True,
         help="Filter out AFK periods and only consider activities when user was active (default: True)",
+    )
+    run_parser.add_argument(
+        "--include-audible",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Treat tabs playing audio (movies/videos) as active, excluding music services (default: True)",
     )
     run_parser.add_argument(
         "--afk-bucket",
@@ -182,7 +194,7 @@ def main():
         print(f" ActivityWatch Gemma Classifier Web UI")
         print(f" Dashboard running at: http://localhost:{port}")
         print(f"========================================================\n")
-        uvicorn.run("app:app", host=host, port=port, reload=True)
+        uvicorn.run("app:app", host=host, port=port, reload=getattr(args, "reload", False))
         return
 
     if args.command == "download-gemma":
@@ -274,6 +286,8 @@ def main():
         print(f"  Event Limit:    {args.limit}")
         print(f"  Confidence Cut: {args.threshold}")
         print(f"  AFK Guard:      {'Enabled' if args.filter_afk else 'Disabled'}")
+        if args.filter_afk:
+            print(f"  Audible Media:  {'Active (except music)' if args.include_audible else 'Disabled'}")
         if args.afk_bucket:
             print(f"  AFK Bucket:     {args.afk_bucket}")
         if args.time_range:
@@ -297,6 +311,7 @@ def main():
             end_time=args.end,
             confidence_threshold=args.threshold,
             filter_afk=args.filter_afk,
+            include_audible=args.include_audible,
             afk_bucket_id=args.afk_bucket,
             collect_training_data=args.collect_training_data,
             auto_commit_git=args.auto_commit,
@@ -305,6 +320,8 @@ def main():
         print("\nPipeline Run Completed!")
         if results.get("afk_filtering_enabled"):
             print(f"  AFK Buckets Used:        {', '.join(results.get('afk_buckets_used', [])) or 'None'}")
+            if results.get("audible_intervals_used", 0) > 0:
+                print(f"  Audible Media Intervals: {results.get('audible_intervals_used')}")
             print(f"  Raw Events Fetched:      {results.get('total_raw_events_fetched', 0)}")
             print(f"  Idle/AFK Events Dropped: {results.get('afk_events_filtered_out', 0)}")
         print(f"  Active Events Processed: {results['total_events_processed']}")

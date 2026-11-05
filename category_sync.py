@@ -61,6 +61,20 @@ GENERIC_HOST_APPS: Set[str] = {
     "fish",
 }
 
+# Dedicated terminal emulators that must strictly map to Development > DevOps & Terminal
+TERMINAL_APPS: Set[str] = {
+    "foot",
+    "kitty",
+    "alacritty",
+    "ptyxis",
+    "gnome-terminal",
+    "konsole",
+    "xterm",
+    "wezterm",
+    "urxvt",
+    "terminator",
+}
+
 # Multi-service portal domains and local network endpoints that must NOT be bound to specific categories.
 GENERIC_DOMAINS: Set[str] = {
     "google.com",
@@ -144,7 +158,7 @@ def build_activitywatch_classes(
             continue
         discovered_keywords.setdefault(cat, {}).setdefault(sub, set())
 
-        # Extract applications (ignoring generic browsers and system shells)
+        # Extract applications (ignoring generic browsers, system shells, and enforcing terminal boundaries)
         app_match = re.search(r"app:([^\s]+)", feat)
         if app_match:
             app_val = app_match.group(1).strip().lower()
@@ -153,7 +167,12 @@ def build_activitywatch_classes(
                 and app_val not in GENERIC_HOST_APPS
                 and not any(b in app_val for b in ("brave", "firefox", "chromium", "chrome", "edge", "safari"))
             ):
-                discovered_keywords[cat][sub].add(re.escape(app_val))
+                # Ensure terminal apps can only belong to Development > DevOps & Terminal
+                if app_val in TERMINAL_APPS:
+                    if cat == "Development" and sub == "DevOps & Terminal":
+                        discovered_keywords[cat][sub].add(re.escape(app_val))
+                else:
+                    discovered_keywords[cat][sub].add(re.escape(app_val))
 
         # Extract domains (ignoring multi-service roots like google.com and local endpoints)
         domain_match = re.search(r"domain:([^\s]+)", feat)
@@ -251,14 +270,27 @@ def build_activitywatch_classes(
 
 
 def sync_taxonomy_to_activitywatch(aw_client, classifier=None) -> Dict[str, Any]:
-    """Compile classifier taxonomy and push into ActivityWatch `/api/0/settings/classes`."""
+    """Compile classifier taxonomy and push into ActivityWatch `/api/0/settings/classes` and category sets."""
     samples = classifier.training_samples if classifier else []
     taxonomy = classifier.taxonomy if classifier else DEFAULT_TAXONOMY
 
     new_classes = build_activitywatch_classes(taxonomy, samples)
     
-    # Send to ActivityWatch
+    # Send compiled classes to ActivityWatch
     success = aw_client.set_setting("classes", new_classes)
+    
+    # Also sync into ActivityWatch preset category_sets and active_set_ids so Web UI stays synchronized
+    category_sets = [{
+        "id": "default",
+        "name": "Default",
+        "categories": new_classes,
+    }]
+    try:
+        aw_client.set_setting("category_sets", category_sets)
+        aw_client.set_setting("active_set_ids", ["default"])
+    except Exception as e:
+        logger.warning(f"Failed to update category_sets: {e}")
+
     return {
         "success": success,
         "classes_count": len(new_classes),

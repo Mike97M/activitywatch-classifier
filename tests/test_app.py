@@ -22,6 +22,8 @@ def test_get_buckets():
     assert response.status_code == 200
     data = response.json()
     assert "buckets" in data
+    assert "source_buckets" in data
+    assert "classified_buckets" in data
 
 
 def test_update_settings():

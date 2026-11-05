@@ -79,6 +79,7 @@ class RunPipelineRequest(BaseModel):
     end_time: Optional[str] = None    # ISO timestamp
     confidence_threshold: Optional[float] = None
     filter_afk: bool = True
+    include_audible: bool = True
     afk_bucket_id: Optional[str] = None
     collect_training_data: bool = True
     auto_commit_git: bool = False
@@ -238,11 +239,34 @@ def download_gemma_api(req: DownloadGemmaRequest, sync: bool = False) -> Dict[st
 
 @app.get("/api/buckets")
 def get_buckets() -> Dict[str, Any]:
-    """List all ActivityWatch buckets and detected AFK buckets."""
+    """List ActivityWatch buckets, detected AFK buckets, and filtered source candidates."""
     try:
         buckets = aw_client.list_buckets()
         afk_buckets = aw_client.list_afk_buckets()
-        return {"buckets": buckets, "afk_buckets": afk_buckets}
+        classified_buckets = {}
+        source_buckets = {}
+
+        for bid, binfo in buckets.items():
+            is_classified = (
+                "classified" in bid.lower()
+                or "classifier" in bid.lower()
+                or binfo.get("client") in ("aw-gemma-classifier", "aw-classifier")
+                or binfo.get("type") == "app.classified.activities"
+                or binfo.get("hostname") == "classified"
+            )
+            is_afk = binfo.get("type") == "afkstatus" or "afk" in bid.lower()
+
+            if is_classified:
+                classified_buckets[bid] = binfo
+            elif not is_afk:
+                source_buckets[bid] = binfo
+
+        return {
+            "buckets": buckets,
+            "afk_buckets": afk_buckets,
+            "classified_buckets": classified_buckets,
+            "source_buckets": source_buckets,
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch buckets: {e}")
 
@@ -304,6 +328,7 @@ def run_pipeline(req: RunPipelineRequest, sync: bool = False) -> Dict[str, Any]:
                 end_time=req.end_time,
                 confidence_threshold=req.confidence_threshold,
                 filter_afk=req.filter_afk,
+                include_audible=req.include_audible,
                 afk_bucket_id=req.afk_bucket_id,
                 collect_training_data=req.collect_training_data,
                 auto_commit_git=req.auto_commit_git,
@@ -331,6 +356,7 @@ def run_pipeline(req: RunPipelineRequest, sync: bool = False) -> Dict[str, Any]:
             "end_time": req.end_time,
             "confidence_threshold": req.confidence_threshold,
             "filter_afk": req.filter_afk,
+            "include_audible": req.include_audible,
             "afk_bucket_id": req.afk_bucket_id,
             "collect_training_data": req.collect_training_data,
             "auto_commit_git": req.auto_commit_git,
@@ -417,4 +443,4 @@ def serve_ui():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("app:app", host=WEB_HOST, port=WEB_PORT, reload=True)
+    uvicorn.run("app:app", host=WEB_HOST, port=WEB_PORT, reload=False)

@@ -33,11 +33,12 @@ venv.bak/
 .env.local
 *.env
 
-# Local data & models cache
+# Local data & models cache (training data strictly local & private)
 data/*.sqlite
 data/*.db
 data/cache/
-!data/training_data.jsonl
+data/*.jsonl
+data/training_data*
 models/*.joblib
 models/*.onnx
 models/*.gguf

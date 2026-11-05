@@ -3,8 +3,11 @@
 from datetime import datetime, timezone
 import pytest
 from afk_filter import (
+    extract_audible_non_afk_intervals,
     filter_events_by_afk,
     filter_period_intersect,
+    is_audible_non_afk,
+    is_excluded_music,
     merge_intervals,
     parse_iso_timestamp,
     resolve_time_range,
@@ -188,3 +191,190 @@ def test_resolve_time_range():
     custom_s, custom_e = resolve_time_range(start_time="2026-11-01T08:00:00Z", end_time="2026-11-02T12:00:00Z")
     assert custom_s == "2026-11-01T08:00:00Z"
     assert custom_e == "2026-11-02T12:00:00Z"
+
+
+def test_is_excluded_music():
+    # Music services must be identified as excluded
+    assert is_excluded_music({"url": "https://music.youtube.com/watch?v=123", "title": "Track"}) is True
+    assert is_excluded_music({"url": "https://open.spotify.com/track/abc", "title": "Song"}) is True
+    assert is_excluded_music({"url": "https://soundcloud.com/artist/track", "title": "Beat"}) is True
+    assert is_excluded_music({"url": "https://deezer.com/track/456", "title": "Melody"}) is True
+    assert is_excluded_music({"url": "https://tidal.com/browse/track/789", "title": "Audio"}) is True
+    assert is_excluded_music({"url": "https://music.apple.com/us/album/xyz", "title": "Album"}) is True
+    assert is_excluded_music({"title": "Favorite Song - YouTube Music"}) is True
+    assert is_excluded_music({"title": "Artist Name - Spotify"}) is True
+    assert is_excluded_music({"app": "spotify", "title": "Playing"}) is True
+
+    # Movies, streams, and non-music videos must NOT be excluded
+    assert is_excluded_music({"url": "https://www.youtube.com/watch?v=rpdTnPWFjDo", "title": "epstein files - YouTube"}) is False
+    assert is_excluded_music({"url": "https://www.netflix.com/watch/80018294", "title": "Daredevil Season 1"}) is False
+    assert is_excluded_music({"url": "https://www.twitch.tv/shroud", "title": "shroud playing Valorant"}) is False
+    assert is_excluded_music({"url": "https://app.plex.tv/web/index.html", "title": "Inception (2010)"}) is False
+    assert is_excluded_music({"url": "https://www.primevideo.com/detail/123", "title": "The Boys"}) is False
+
+
+def test_is_audible_non_afk():
+    # Video playing with audio
+    assert is_audible_non_afk({
+        "data": {"audible": True, "url": "https://www.youtube.com/watch?v=movie1", "title": "Documentary - YouTube"}
+    }) is True
+
+    # Video tab muted or paused (audible: False)
+    assert is_audible_non_afk({
+        "data": {"audible": False, "url": "https://www.youtube.com/watch?v=movie1", "title": "Documentary - YouTube"}
+    }) is False
+
+    # Tab playing music (audible: True, but YouTube Music) -> excluded
+    assert is_audible_non_afk({
+        "data": {"audible": True, "url": "https://music.youtube.com/watch?v=song1", "title": "Song - YouTube Music"}
+    }) is False
+
+    # Tab playing Spotify (audible: True) -> excluded
+    assert is_audible_non_afk({
+        "data": {"audible": True, "url": "https://open.spotify.com/track/123", "title": "Artist - Spotify"}
+    }) is False
+
+
+def test_extract_audible_non_afk_intervals():
+    events = [
+        # Normal heartbeat with duration 0.0 -> must be extended to pulsetime (65.0s)
+        {
+            "timestamp": "2026-11-05T12:00:00Z",
+            "duration": 0.0,
+            "data": {"audible": True, "url": "https://www.youtube.com/watch?v=1", "title": "Movie Part 1 - YouTube"},
+        },
+        # YouTube Music event -> must be ignored
+        {
+            "timestamp": "2026-11-05T12:01:00Z",
+            "duration": 60.0,
+            "data": {"audible": True, "url": "https://music.youtube.com/watch?v=2", "title": "Music Track"},
+        },
+        # Non-audible event -> must be ignored
+        {
+            "timestamp": "2026-11-05T12:02:00Z",
+            "duration": 60.0,
+            "data": {"audible": False, "url": "https://news.ycombinator.com", "title": "Hacker News"},
+        },
+    ]
+
+    intervals = extract_audible_non_afk_intervals(events, pulsetime=65.0)
+    assert len(intervals) == 1
+    assert intervals[0]["timestamp"] == "2026-11-05T12:00:00Z"
+    assert intervals[0]["duration"] == 65.0
+    assert intervals[0]["data"]["status"] == "not-afk"
+    assert intervals[0]["data"]["audible"] is True
+
+
+def test_filter_events_by_afk_with_audible_movie():
+    # User is AFK according to keyboard/mouse from 12:05 to 12:45
+    afk_events = [
+        {"timestamp": "2026-11-05T12:00:00Z", "duration": 300.0, "data": {"status": "not-afk"}},
+        {"timestamp": "2026-11-05T12:05:00Z", "duration": 2400.0, "data": {"status": "afk"}},
+    ]
+
+    # Activity: User watching a movie in browser from 12:05 to 12:35 (1800s)
+    window_events = [
+        {
+            "timestamp": "2026-11-05T12:05:00Z",
+            "duration": 1800.0,
+            "data": {"app": "Firefox", "title": "Full Movie HD - YouTube"},
+        },
+        # Followed by idle away period 12:35 to 12:45 (600s)
+        {
+            "timestamp": "2026-11-05T12:35:00Z",
+            "duration": 600.0,
+            "data": {"app": "Firefox", "title": "Desktop / Blank"},
+        },
+    ]
+
+    # Web tab watcher records audible: True for the movie from 12:05 to 12:35
+    audible_events = [
+        {
+            "timestamp": "2026-11-05T12:05:00Z",
+            "duration": 1800.0,
+            "data": {
+                "audible": True,
+                "url": "https://www.youtube.com/watch?v=movie",
+                "title": "Full Movie HD - YouTube",
+            },
+        }
+    ]
+
+    # 1. WITHOUT audible support: entire 12:05-12:45 is AFK, movie is dropped
+    filtered_no_audible = filter_events_by_afk(window_events, afk_events, include_audible=False)
+    assert len(filtered_no_audible) == 0
+
+    # 2. WITH audible support: movie period 12:05-12:35 is preserved as active!
+    filtered_with_audible = filter_events_by_afk(
+        window_events, afk_events, audible_events=audible_events, include_audible=True
+    )
+    assert len(filtered_with_audible) == 1
+    assert filtered_with_audible[0]["data"]["title"] == "Full Movie HD - YouTube"
+    assert filtered_with_audible[0]["duration"] == 1800.0
+
+
+def test_filter_events_by_afk_with_audible_music_still_afk():
+    # User is AFK according to keyboard/mouse from 12:05 to 12:45
+    afk_events = [
+        {"timestamp": "2026-11-05T12:00:00Z", "duration": 300.0, "data": {"status": "not-afk"}},
+        {"timestamp": "2026-11-05T12:05:00Z", "duration": 2400.0, "data": {"status": "afk"}},
+    ]
+
+    # Activity: Browser open with Spotify playing while user went away
+    window_events = [
+        {
+            "timestamp": "2026-11-05T12:05:00Z",
+            "duration": 1800.0,
+            "data": {"app": "Firefox", "title": "Spotify - Web Player"},
+        }
+    ]
+
+    audible_events = [
+        {
+            "timestamp": "2026-11-05T12:05:00Z",
+            "duration": 1800.0,
+            "data": {
+                "audible": True,
+                "url": "https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M",
+                "title": "Today's Top Hits - Spotify",
+            },
+        }
+    ]
+
+    # Even with include_audible=True, Spotify must NOT exempt from AFK
+    filtered = filter_events_by_afk(
+        window_events, afk_events, audible_events=audible_events, include_audible=True
+    )
+    assert len(filtered) == 0
+
+
+def test_find_web_buckets_for_source(monkeypatch):
+    client = AWClient(base_url="http://mock-server:5600")
+
+    mock_buckets = {
+        "aw-watcher-window_fedora": {"hostname": "fedora", "type": "currentwindow"},
+        "aw-watcher-web-firefox_fedora": {"hostname": "fedora", "type": "web.tab.current"},
+        "aw-watcher-afk_fedora": {"hostname": "fedora", "type": "afkstatus"},
+        "aw-watcher-window_laptop": {"hostname": "laptop", "type": "currentwindow"},
+        "aw-watcher-web-firefox_laptop": {"hostname": "laptop", "type": "web.tab.current"},
+        "aw-watcher-web-brave_laptop": {"hostname": "laptop", "type": "web.tab.current"},
+        "aw-watcher-afk_laptop": {"hostname": "laptop", "type": "afkstatus"},
+        "aw-watcher-android-synced-from-oneplus_12": {"hostname": "oneplus_12", "type": "currentwindow"},
+        "aw-watcher-android-web-synced-from-oneplus_12": {"hostname": "oneplus_12", "type": "web.tab.current"},
+        "aw-watcher-web_classified": {"hostname": "classified", "type": "web.tab.current"},
+    }
+
+    monkeypatch.setattr(client, "list_buckets", lambda: mock_buckets)
+
+    # fedora window -> fedora web only
+    assert client.find_web_buckets_for_source("aw-watcher-window_fedora") == ["aw-watcher-web-firefox_fedora"]
+    # laptop window -> both laptop web buckets
+    assert sorted(client.find_web_buckets_for_source("aw-watcher-window_laptop")) == [
+        "aw-watcher-web-brave_laptop",
+        "aw-watcher-web-firefox_laptop",
+    ]
+    # phone window -> phone web only
+    assert client.find_web_buckets_for_source("aw-watcher-android-synced-from-oneplus_12") == [
+        "aw-watcher-android-web-synced-from-oneplus_12"
+    ]
+

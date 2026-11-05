@@ -252,6 +252,28 @@
             </label>
           </div>
 
+          <!-- Audible Media Tabs Option -->
+          <div class="flex items-center justify-between p-3 rounded-lg bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800">
+            <div class="flex items-center space-x-2.5">
+              <div class="w-7 h-7 rounded-lg bg-sky-50 dark:bg-sky-950/60 text-sky-500 flex items-center justify-center">
+                <i class="fa-solid fa-film text-xs"></i>
+              </div>
+              <div>
+                <div class="text-xs font-bold text-slate-800 dark:text-slate-100 flex items-center">
+                  <span>Audible Media Tabs (Movies / Videos)</span>
+                  <span id="audible-badge" class="ml-2 px-1.5 py-0.5 text-[9px] rounded font-mono bg-sky-100 dark:bg-sky-950 text-sky-700 dark:text-sky-300 border border-sky-300 dark:border-sky-800">Active</span>
+                </div>
+                <div class="text-[11px] text-slate-500 dark:text-slate-400">
+                  Keep tabs playing audio (e.g. YouTube, Netflix) as active without mouse/key input. Excludes music (Spotify, YT Music).
+                </div>
+              </div>
+            </div>
+            <label class="relative inline-flex items-center cursor-pointer">
+              <input type="checkbox" id="toggle-include-audible" checked class="sr-only peer" />
+              <div class="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-aw"></div>
+            </label>
+          </div>
+
           <!-- Training Data Auto-Collection & Git Sync Options -->
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3 rounded-lg bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800">
             <!-- Auto-Expand Dataset -->

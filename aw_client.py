@@ -117,12 +117,45 @@ class AWClient:
             if bid == candidate_name:
                 return bid
 
-        # Priority 4: If only 1 AFK bucket exists on server, use it
-        if len(afk_candidates) == 1:
-            return afk_candidates[0][0]
+        # Never fall back to another device's AFK bucket (e.g. do not filter phone activity using laptop AFK)
+        logger.info(
+            f"No matching AFK bucket found for host '{source_host}' / suffix '{source_suffix}' on {source_bucket_id}."
+        )
+        return None
 
-        # Priority 5: Return first candidate as fallback
-        return afk_candidates[0][0]
+    def find_web_buckets_for_source(self, source_bucket_id: str) -> List[str]:
+        """Find all browser/web watcher buckets associated with the same device/hostname as source_bucket_id.
+
+        Matches by hostname attribute, bucket name suffix (e.g. '_fedora', '_laptop'),
+        or self if source_bucket_id is itself a web bucket. Avoids cross-device contamination.
+        """
+        all_buckets = self.list_buckets()
+        source_info = all_buckets.get(source_bucket_id, {})
+        source_host = source_info.get("hostname", "")
+        source_suffix = source_bucket_id.split("_")[-1] if "_" in source_bucket_id else ""
+
+        web_candidates: List[str] = []
+        for bid, binfo in all_buckets.items():
+            btype = binfo.get("type", "")
+            # Identify web watcher buckets (excluding classifier generated or afk buckets)
+            is_web = (
+                btype == "web.tab.current"
+                or ("web" in bid.lower() and "afk" not in bid.lower() and "classified" not in bid.lower())
+            )
+            if not is_web:
+                continue
+
+            b_host = binfo.get("hostname", "")
+            b_suffix = bid.split("_")[-1] if "_" in bid else ""
+
+            if source_host and b_host and source_host == b_host:
+                web_candidates.append(bid)
+            elif source_suffix and b_suffix and source_suffix == b_suffix:
+                web_candidates.append(bid)
+            elif not source_host and not source_suffix and bid == source_bucket_id:
+                web_candidates.append(bid)
+
+        return sorted(list(set(web_candidates)))
 
     def get_bucket(self, bucket_id: str) -> Optional[Dict[str, Any]]:
         """Get details for a single bucket."""
