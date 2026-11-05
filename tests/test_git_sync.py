@@ -26,11 +26,14 @@ def test_git_sync_nonexistent_file():
 
 
 def test_git_sync_already_clean_or_commit():
-    # If the working directory has changes, commit them or verify up to date response
+    # If training data is gitignored (privacy mode), it should not be committed to Git
     status = git_sync.get_training_data_status()
     res = git_sync.commit_training_data()
     assert res["success"] is True
-    if not status["is_modified_or_untracked"]:
+    if res.get("is_gitignored"):
+        assert res["committed"] is False
+        assert "gitignored" in res["message"].lower()
+    elif not status["is_modified_or_untracked"]:
         assert res["committed"] is False
         assert "already up to date" in res["message"]
     else:
