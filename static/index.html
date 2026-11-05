@@ -71,6 +71,12 @@
 
       <!-- Right System Status & Controls -->
       <div class="flex items-center space-x-3 text-xs">
+        <!-- Running Task Indicator (Visible on refresh / active run) -->
+        <div id="running-task-pill" class="hidden items-center space-x-2 px-3 py-1.5 rounded-full bg-emerald-50 dark:bg-emerald-950/80 border border-emerald-300 dark:border-emerald-700/80 text-emerald-800 dark:text-emerald-200">
+          <span class="w-2 h-2 rounded-full bg-aw animate-ping"></span>
+          <span class="text-xs font-medium font-varela" id="running-task-pill-text">Task Running...</span>
+        </div>
+
         <!-- ActivityWatch Server Status Indicator -->
         <div id="aw-status-pill" class="flex items-center space-x-2 px-3 py-1.5 rounded-full bg-slate-100 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700">
           <span class="w-2 h-2 rounded-full bg-amber-400 animate-pulse" id="aw-indicator"></span>
@@ -286,7 +292,7 @@
           <!-- Action Button -->
           <div class="space-y-3 pt-1">
             <button id="btn-run-pipeline" class="w-full aw-btn-primary py-2.5 px-4 shadow-sm flex items-center justify-center space-x-2">
-              <i class="fa-solid fa-play text-xs"></i>
+              <i class="fa-solid fa-play text-xs" id="btn-run-icon"></i>
               <span id="btn-run-text" class="text-xs font-bold">Start Non-Destructive Cloning & Gemma Classification</span>
             </button>
 

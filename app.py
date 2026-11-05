@@ -26,6 +26,7 @@ from config import (
 )
 from gemma_oracle import GemmaOracle, download_gemma_weights
 from pipeline import ClassificationPipeline
+from task_manager import task_manager
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger("app")
@@ -124,6 +125,14 @@ def get_status() -> Dict[str, Any]:
 
     git_status = git_sync.get_training_data_status()
 
+    active_task = task_manager.get_active_task()
+    last_task = task_manager.get_last_completed_task(max_age_seconds=60.0)
+    active_dict = (
+        active_task.to_dict()
+        if active_task
+        else (last_task.to_dict() if last_task else None)
+    )
+
     return {
         "activitywatch": aw_status,
         "classifier": classifier_stats,
@@ -131,7 +140,29 @@ def get_status() -> Dict[str, Any]:
         "confidence_threshold": pipeline.confidence_threshold,
         "last_run_stats": pipeline.last_run_stats,
         "git_status": git_status,
+        "active_task": active_dict,
     }
+
+
+@app.get("/api/tasks/active")
+def get_active_task_api() -> Dict[str, Any]:
+    """Return currently active background task or recently completed task."""
+    active = task_manager.get_active_task()
+    if active:
+        return {"has_active": True, "task": active.to_dict()}
+    last = task_manager.get_last_completed_task(max_age_seconds=60.0)
+    if last:
+        return {"has_active": False, "last_completed": last.to_dict()}
+    return {"has_active": False, "task": None}
+
+
+@app.get("/api/tasks/{task_id}")
+def get_task_status_api(task_id: str) -> Dict[str, Any]:
+    """Retrieve progress and completion state of a specific background task."""
+    task = task_manager.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found.")
+    return task.to_dict()
 
 
 @app.get("/api/git/status")
@@ -156,14 +187,28 @@ def commit_git(req: Optional[GitCommitRequest] = None) -> Dict[str, Any]:
 
 
 @app.post("/api/download-gemma")
-def download_gemma_api(req: DownloadGemmaRequest) -> Dict[str, Any]:
-    """Download Gemma 4 E2B weights directly from Hugging Face for local in-process inference."""
-    try:
-        repo = DEFAULT_LOCAL_GGUF_REPO
-        filename = (
-            LIGHT_LOCAL_GGUF_NAME if req.variant == "light" else DEFAULT_LOCAL_GGUF_NAME
-        )
+def download_gemma_api(req: DownloadGemmaRequest, sync: bool = False) -> Dict[str, Any]:
+    """Download Gemma 4 E2B weights directly from Hugging Face in a background task."""
+    repo = DEFAULT_LOCAL_GGUF_REPO
+    filename = (
+        LIGHT_LOCAL_GGUF_NAME if req.variant == "light" else DEFAULT_LOCAL_GGUF_NAME
+    )
 
+    active = task_manager.get_active_task()
+    if active and active.task_type == "download_gemma":
+        return {
+            "status": "already_running",
+            "task_id": active.id,
+            "task": active.to_dict(),
+        }
+
+    def do_download(progress_callback=None):
+        if progress_callback:
+            progress_callback({
+                "step": "downloading",
+                "percent": 25.0,
+                "message": f"Downloading {filename} from Hugging Face ({repo})...",
+            })
         path = download_gemma_weights(repo_id=repo, filename=filename)
         gemma_oracle.local_gguf_path = str(path)
         return {
@@ -171,9 +216,24 @@ def download_gemma_api(req: DownloadGemmaRequest) -> Dict[str, Any]:
             "path": str(path),
             "local_model": gemma_oracle.get_local_model_info(),
         }
-    except Exception as e:
-        logger.exception("Failed to download Gemma 4 E2B model weights")
-        raise HTTPException(status_code=500, detail=f"Download failed: {e}")
+
+    if sync:
+        try:
+            return do_download()
+        except Exception as e:
+            logger.exception("Failed to download Gemma 4 E2B model weights")
+            raise HTTPException(status_code=500, detail=f"Download failed: {e}")
+
+    task = task_manager.start_task(
+        task_type="download_gemma",
+        target_fn=do_download,
+        metadata={"variant": req.variant, "filename": filename},
+    )
+    return {
+        "status": "started",
+        "task_id": task.id,
+        "task": task.to_dict(),
+    }
 
 
 @app.get("/api/buckets")
@@ -220,29 +280,68 @@ def update_settings(req: SettingsUpdateRequest) -> Dict[str, Any]:
 
 
 @app.post("/api/run-pipeline")
-def run_pipeline(req: RunPipelineRequest) -> Dict[str, Any]:
-    """Execute non-destructive cloning and active learning classification."""
+def run_pipeline(req: RunPipelineRequest, sync: bool = False) -> Dict[str, Any]:
+    """Execute non-destructive cloning and active learning classification in a tracked background task."""
     if not req.source_bucket_ids:
         raise HTTPException(status_code=400, detail="Must select at least one source bucket.")
 
-    try:
-        stats = pipeline.run(
-            source_bucket_ids=req.source_bucket_ids,
-            target_bucket_id=req.target_bucket_id.strip() or DEFAULT_TARGET_BUCKET_ID,
-            limit_per_bucket=req.limit_per_bucket,
-            time_range=req.time_range,
-            start_time=req.start_time,
-            end_time=req.end_time,
-            confidence_threshold=req.confidence_threshold,
-            filter_afk=req.filter_afk,
-            afk_bucket_id=req.afk_bucket_id,
-            collect_training_data=req.collect_training_data,
-            auto_commit_git=req.auto_commit_git,
-        )
-        return {"status": "completed", "results": stats}
-    except Exception as e:
-        logger.exception("Pipeline run encountered an error")
-        raise HTTPException(status_code=500, detail=f"Pipeline error: {e}")
+    active_task = task_manager.get_active_task()
+    if active_task and active_task.task_type == "pipeline_run":
+        return {
+            "status": "already_running",
+            "task_id": active_task.id,
+            "task": active_task.to_dict(),
+        }
+
+    if sync:
+        try:
+            stats = pipeline.run(
+                source_bucket_ids=req.source_bucket_ids,
+                target_bucket_id=req.target_bucket_id.strip() or DEFAULT_TARGET_BUCKET_ID,
+                limit_per_bucket=req.limit_per_bucket,
+                time_range=req.time_range,
+                start_time=req.start_time,
+                end_time=req.end_time,
+                confidence_threshold=req.confidence_threshold,
+                filter_afk=req.filter_afk,
+                afk_bucket_id=req.afk_bucket_id,
+                collect_training_data=req.collect_training_data,
+                auto_commit_git=req.auto_commit_git,
+            )
+            return {"status": "completed", "results": stats}
+        except Exception as e:
+            logger.exception("Pipeline run encountered an error")
+            raise HTTPException(status_code=500, detail=f"Pipeline error: {e}")
+
+    task = task_manager.start_task(
+        task_type="pipeline_run",
+        target_fn=pipeline.run,
+        metadata={
+            "source_bucket_ids": req.source_bucket_ids,
+            "target_bucket_id": req.target_bucket_id,
+            "limit_per_bucket": req.limit_per_bucket,
+            "time_range": req.time_range,
+        },
+        fn_kwargs={
+            "source_bucket_ids": req.source_bucket_ids,
+            "target_bucket_id": req.target_bucket_id.strip() or DEFAULT_TARGET_BUCKET_ID,
+            "limit_per_bucket": req.limit_per_bucket,
+            "time_range": req.time_range,
+            "start_time": req.start_time,
+            "end_time": req.end_time,
+            "confidence_threshold": req.confidence_threshold,
+            "filter_afk": req.filter_afk,
+            "afk_bucket_id": req.afk_bucket_id,
+            "collect_training_data": req.collect_training_data,
+            "auto_commit_git": req.auto_commit_git,
+        },
+    )
+
+    return {
+        "status": "started",
+        "task_id": task.id,
+        "task": task.to_dict(),
+    }
 
 
 @app.post("/api/correct-event")

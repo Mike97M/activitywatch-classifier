@@ -8,6 +8,11 @@ let chartMode = "main"; // 'main' or 'sub'
 let categoryChart = null;
 let lastEvents = [];
 
+// Running Task Tracking & Polling
+let activeTaskPoller = null;
+let activeTaskId = null;
+let lastHandledTaskId = localStorage.getItem("aw_last_handled_task_id") || null;
+
 // Initialize Theme immediately to prevent theme flashing
 initTheme();
 
@@ -48,6 +53,7 @@ function checkEmbedMode() {
 
 async function initApp() {
   await fetchStatus();
+  await checkActiveTasks();
   await fetchBuckets();
   initChart();
   await loadTargetEvents();
@@ -151,6 +157,11 @@ async function fetchStatus() {
         details.textContent = "No local GGUF in models/. Click download below or run: uv run python main.py download-gemma";
       }
     }
+
+    // Check for running background tasks across page refreshes
+    if (data.active_task) {
+      checkActiveTasks(data);
+    }
   } catch (err) {
     console.error("Status fetch failed:", err);
   }
@@ -212,6 +223,211 @@ async function fetchBuckets() {
 }
 
 // -------------------------------------------------------------
+// Background Task Management & Refresh Persistence
+// -------------------------------------------------------------
+async function checkActiveTasks(statusData = null) {
+  try {
+    let task = null;
+    if (statusData && statusData.active_task) {
+      task = statusData.active_task;
+    } else {
+      const res = await fetch("/api/tasks/active");
+      if (res.ok) {
+        const data = await res.json();
+        task = data.task || data.last_completed;
+      }
+    }
+
+    if (!task) {
+      hideTaskProgress();
+      return;
+    }
+
+    if (task.task_type === "download_gemma") {
+      const btn1 = document.getElementById("btn-download-gemma-ui");
+      const btn2 = document.getElementById("btn-download-gemma2-ui");
+      const details = document.getElementById("local-model-details");
+      if (task.status === "running") {
+        if (btn1) btn1.disabled = true;
+        if (btn2) btn2.disabled = true;
+        if (details) details.textContent = task.progress.message || "Downloading Gemma weights in background...";
+        pollDownloadTask(task.id);
+      }
+      return;
+    }
+
+    if (task.status === "running") {
+      attachToRunningTask(task);
+    } else if (task.status === "completed" && task.id !== lastHandledTaskId) {
+      await applyTaskResults(task);
+    }
+  } catch (e) {
+    console.warn("Could not check active tasks:", e);
+  }
+}
+
+function attachToRunningTask(task) {
+  activeTaskId = task.id;
+
+  const btn = document.getElementById("btn-run-pipeline");
+  const btnText = document.getElementById("btn-run-text");
+  const btnIcon = document.getElementById("btn-run-icon");
+  const progressContainer = document.getElementById("progress-container");
+  const runningPill = document.getElementById("running-task-pill");
+
+  if (btn) btn.disabled = true;
+  if (btnText) btnText.textContent = "Pipeline Running in Background...";
+  if (btnIcon) btnIcon.className = "fa-solid fa-spinner fa-spin text-xs";
+
+  if (progressContainer) progressContainer.classList.remove("hidden");
+  if (runningPill) {
+    runningPill.classList.remove("hidden");
+    runningPill.classList.add("flex");
+  }
+
+  updateTaskProgressUI(task);
+
+  if (activeTaskPoller) {
+    clearInterval(activeTaskPoller);
+    activeTaskPoller = null;
+  }
+
+  activeTaskPoller = setInterval(async () => {
+    try {
+      const res = await fetch(`/api/tasks/${activeTaskId}`);
+      if (!res.ok) {
+        clearInterval(activeTaskPoller);
+        activeTaskPoller = null;
+        return;
+      }
+      const currentTask = await res.json();
+      if (currentTask.status === "running") {
+        updateTaskProgressUI(currentTask);
+      } else if (currentTask.status === "completed") {
+        clearInterval(activeTaskPoller);
+        activeTaskPoller = null;
+        updateTaskProgressUI(currentTask);
+        await applyTaskResults(currentTask);
+      } else if (currentTask.status === "failed") {
+        clearInterval(activeTaskPoller);
+        activeTaskPoller = null;
+        handleTaskFailed(currentTask);
+      }
+    } catch (err) {
+      console.warn("Task polling error:", err);
+    }
+  }, 750);
+}
+
+function updateTaskProgressUI(task) {
+  const progressFill = document.getElementById("progress-bar-fill");
+  const progressPercent = document.getElementById("progress-percent");
+  const progressStatusText = document.getElementById("progress-status-text");
+  const runningPillText = document.getElementById("running-task-pill-text");
+
+  const p = task.progress || {};
+  const pct = Math.round(p.percent || 0);
+
+  if (progressFill) progressFill.style.width = `${Math.max(5, pct)}%`;
+  if (progressPercent) progressPercent.textContent = `${pct}%`;
+  if (progressStatusText) {
+    progressStatusText.textContent = p.message || (pct >= 100 ? "Completed" : "Processing activities...");
+  }
+  if (runningPillText) {
+    runningPillText.textContent = `Running: ${pct}%`;
+  }
+
+  if (p.stats) {
+    if (p.stats.fast_calls !== undefined) {
+      const el = document.getElementById("stat-fast-calls");
+      if (el) el.textContent = p.stats.fast_calls;
+    }
+    if (p.stats.gemma_calls !== undefined) {
+      const el = document.getElementById("stat-gemma-calls");
+      if (el) el.textContent = p.stats.gemma_calls;
+    }
+  }
+}
+
+async function applyTaskResults(task) {
+  lastHandledTaskId = task.id;
+  localStorage.setItem("aw_last_handled_task_id", task.id);
+
+  const results = task.results;
+  if (!results) {
+    hideTaskProgress();
+    return;
+  }
+
+  const progressFill = document.getElementById("progress-bar-fill");
+  const progressPercent = document.getElementById("progress-percent");
+  const progressStatusText = document.getElementById("progress-status-text");
+
+  if (progressFill) progressFill.style.width = "100%";
+  if (progressPercent) progressPercent.textContent = "100% Done";
+  if (progressStatusText) progressStatusText.textContent = "Activities classified and saved to ActivityWatch.";
+
+  if (results.fast_classifier_calls !== undefined) {
+    document.getElementById("stat-fast-calls").textContent = results.fast_classifier_calls;
+  }
+  if (results.gemma_oracle_calls !== undefined) {
+    document.getElementById("stat-gemma-calls").textContent = results.gemma_oracle_calls;
+  }
+  if (results.classifier_stats?.total_training_samples !== undefined) {
+    document.getElementById("stat-training-samples").textContent = results.classifier_stats.total_training_samples;
+  }
+
+  if (results.afk_filtering_enabled && results.afk_events_filtered_out > 0) {
+    document.getElementById("target-bucket-info").textContent = 
+      `${results.total_events_processed} active events categorized (filtered out ${results.afk_events_filtered_out} idle/AFK events)`;
+  } else if (results.total_events_processed !== undefined) {
+    document.getElementById("target-bucket-info").textContent =
+      `${results.total_events_processed} activities categorized and live in target bucket`;
+  }
+
+  currentCategoryDist = results.category_distribution || {};
+  currentSubcategoryDist = results.subcategory_distribution || {};
+  refreshChart();
+
+  if (results.recent_preview && results.recent_preview.length > 0) {
+    renderEventsTable(results.recent_preview);
+  } else {
+    const targetBucketId = document.getElementById("target-bucket-id").value.trim() || "aw-classifier-categorized";
+    await loadTargetEvents(targetBucketId);
+  }
+
+  await fetchStatus();
+
+  setTimeout(() => {
+    hideTaskProgress();
+  }, 2000);
+}
+
+function hideTaskProgress() {
+  const btn = document.getElementById("btn-run-pipeline");
+  const btnText = document.getElementById("btn-run-text");
+  const btnIcon = document.getElementById("btn-run-icon");
+  const progressContainer = document.getElementById("progress-container");
+  const runningPill = document.getElementById("running-task-pill");
+
+  if (btn) btn.disabled = false;
+  if (btnText) btnText.textContent = "Start Non-Destructive Cloning & Gemma Classification";
+  if (btnIcon) btnIcon.className = "fa-solid fa-play text-xs";
+  if (progressContainer) progressContainer.classList.add("hidden");
+  if (runningPill) {
+    runningPill.classList.add("hidden");
+    runningPill.classList.remove("flex");
+  }
+}
+
+function handleTaskFailed(task) {
+  const progressStatusText = document.getElementById("progress-status-text");
+  if (progressStatusText) progressStatusText.textContent = `Error: ${task.error || "Task failed"}`;
+  alert("Pipeline task failed: " + (task.error || "Unknown error"));
+  hideTaskProgress();
+}
+
+// -------------------------------------------------------------
 // Pipeline Execution
 // -------------------------------------------------------------
 async function runPipeline() {
@@ -240,15 +456,19 @@ async function runPipeline() {
 
   const btn = document.getElementById("btn-run-pipeline");
   const btnText = document.getElementById("btn-run-text");
+  const btnIcon = document.getElementById("btn-run-icon");
   const progressContainer = document.getElementById("progress-container");
   const progressFill = document.getElementById("progress-bar-fill");
   const progressPercent = document.getElementById("progress-percent");
+  const progressStatusText = document.getElementById("progress-status-text");
 
   btn.disabled = true;
-  btnText.textContent = "Cloning & Gemma Classifying...";
+  btnText.textContent = "Starting Pipeline...";
+  if (btnIcon) btnIcon.className = "fa-solid fa-spinner fa-spin text-xs";
   progressContainer.classList.remove("hidden");
-  progressFill.style.width = "40%";
-  progressPercent.textContent = "Processing...";
+  progressFill.style.width = "5%";
+  progressPercent.textContent = "5%";
+  progressStatusText.textContent = "Queuing task in background...";
 
   try {
     const res = await fetch("/api/run-pipeline", {
@@ -272,42 +492,14 @@ async function runPipeline() {
     }
 
     const data = await res.json();
-    const results = data.results;
-
-    progressFill.style.width = "100%";
-    progressPercent.textContent = "100% Done";
-
-    // Update stats
-    document.getElementById("stat-fast-calls").textContent = results.fast_classifier_calls || 0;
-    document.getElementById("stat-gemma-calls").textContent = results.gemma_oracle_calls || 0;
-    document.getElementById("stat-training-samples").textContent = results.classifier_stats?.total_training_samples || 0;
-
-    if (results.afk_filtering_enabled && results.afk_events_filtered_out > 0) {
-      document.getElementById("target-bucket-info").textContent = 
-        `${results.total_events_processed} active events categorized (filtered out ${results.afk_events_filtered_out} idle/AFK events)`;
+    if (data.task) {
+      attachToRunningTask(data.task);
+    } else if (data.results) {
+      await applyTaskResults({ id: "sync_task", results: data.results });
     }
-
-    // Update chart
-    currentCategoryDist = results.category_distribution || {};
-    currentSubcategoryDist = results.subcategory_distribution || {};
-    refreshChart();
-
-    // Render preview events
-    if (results.recent_preview) {
-      renderEventsTable(results.recent_preview);
-    } else {
-      await loadTargetEvents(targetBucketId);
-    }
-
-    await fetchStatus();
   } catch (err) {
     alert("Error executing pipeline: " + err.message);
-  } finally {
-    setTimeout(() => {
-      btn.disabled = false;
-      btnText.textContent = "Start Non-Destructive Cloning & Gemma Classification";
-      progressContainer.classList.add("hidden");
-    }, 1200);
+    hideTaskProgress();
   }
 }
 
@@ -813,6 +1005,42 @@ function setupEventListeners() {
   });
 }
 
+function pollDownloadTask(taskId) {
+  const btn1 = document.getElementById("btn-download-gemma-ui");
+  const btn2 = document.getElementById("btn-download-gemma2-ui");
+  const details = document.getElementById("local-model-details");
+
+  const poller = setInterval(async () => {
+    try {
+      const res = await fetch(`/api/tasks/${taskId}`);
+      if (!res.ok) {
+        clearInterval(poller);
+        if (btn1) btn1.disabled = false;
+        if (btn2) btn2.disabled = false;
+        return;
+      }
+      const t = await res.json();
+      if (t.status === "running") {
+        if (details) details.textContent = t.progress.message || "Downloading model weights...";
+      } else if (t.status === "completed") {
+        clearInterval(poller);
+        if (btn1) btn1.disabled = false;
+        if (btn2) btn2.disabled = false;
+        alert(`Success! Downloaded Gemma weights to ${t.results?.path || "models/"}`);
+        await fetchStatus();
+      } else if (t.status === "failed") {
+        clearInterval(poller);
+        if (btn1) btn1.disabled = false;
+        if (btn2) btn2.disabled = false;
+        if (details) details.textContent = `Download failed: ${t.error}`;
+        alert(`Download failed: ${t.error}`);
+      }
+    } catch (err) {
+      console.warn("Download poller error:", err);
+    }
+  }, 1000);
+}
+
 async function downloadGemmaFromUI(variant) {
   const btn1 = document.getElementById("btn-download-gemma-ui");
   const btn2 = document.getElementById("btn-download-gemma2-ui");
@@ -821,7 +1049,7 @@ async function downloadGemmaFromUI(variant) {
   btn1.disabled = true;
   btn2.disabled = true;
   const label = variant === "light" ? "Gemma 4 E2B Light (~2.5 GB)" : "Gemma 4 E2B Standard (~3.1 GB)";
-  details.textContent = `Downloading ${label} weights directly from Hugging Face... This may take a few minutes depending on your internet connection.`;
+  details.textContent = `Queuing download for ${label} weights from Hugging Face...`;
 
   try {
     const res = await fetch("/api/download-gemma", {
@@ -836,12 +1064,17 @@ async function downloadGemmaFromUI(variant) {
     }
 
     const data = await res.json();
-    alert(`Success! Downloaded Gemma 4 E2B weights to ${data.path}`);
-    await fetchStatus();
+    if (data.task_id) {
+      pollDownloadTask(data.task_id);
+    } else if (data.status === "success") {
+      alert(`Success! Downloaded Gemma 4 E2B weights to ${data.path}`);
+      btn1.disabled = false;
+      btn2.disabled = false;
+      await fetchStatus();
+    }
   } catch (err) {
     alert("Download failed: " + err.message);
     details.textContent = "Download failed: " + err.message;
-  } finally {
     btn1.disabled = false;
     btn2.disabled = false;
   }
