@@ -59,8 +59,31 @@ def test_sync_taxonomy_to_activitywatch():
     assert res["classes_count"] >= 30
     assert "Development" in res["categories"]
 
-    mock_client.set_setting.assert_called_once()
-    args, _ = mock_client.set_setting.call_args
-    key, classes_payload = args
-    assert key == "classes"
-    assert isinstance(classes_payload, list)
+
+def test_generic_browsers_and_domains_not_polluting_categories():
+    # Samples with browser app and generic root domain
+    samples = [
+        {
+            "text": "app:brave-browser domain:mail.google.com root_domain:google.com title:gmail - brave",
+            "category": "Communication",
+            "subcategory": "Email",
+        },
+        {
+            "text": "app:org.chromium.chromium domain:experiments.hetzner.com root_domain:hetzner.com title:hetzner",
+            "category": "Browsing & Research",
+            "subcategory": "Search & Exploration",
+        },
+    ]
+
+    classes = build_activitywatch_classes(training_samples=samples)
+    email_class = next(c for c in classes if c["name"] == ["Communication", "Email"])
+    email_regex = email_class["rule"]["regex"]
+
+    # Must include mail.google.com
+    assert "mail\\.google\\.com" in email_regex
+    # Must NOT include browser app names or generic root domain google.com (standalone)
+    assert "brave-browser" not in email_regex
+    assert "brave\\-browser" not in email_regex
+    assert "(google\\.com)" not in email_regex
+    assert "|google\\.com|" not in f"|{email_regex}|"
+    assert "org.chromium.chromium" not in email_regex

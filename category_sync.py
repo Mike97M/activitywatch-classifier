@@ -2,7 +2,7 @@
 
 import logging
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 from config import DEFAULT_TAXONOMY
 
 logger = logging.getLogger("category_sync")
@@ -18,6 +18,69 @@ CATEGORY_COLORS: Dict[str, str] = {
     "Uncategorized": "#94a3b8",        # Muted Gray
 }
 
+# General-purpose applications (browsers, terminals, runners) that host arbitrary content
+# and must NOT be bound to specific categories to prevent polluting native regex rules.
+GENERIC_HOST_APPS: Set[str] = {
+    "browser",
+    "brave",
+    "brave-browser",
+    "firefox",
+    "chromium",
+    "chrome",
+    "google-chrome",
+    "google-chrome-stable",
+    "edge",
+    "microsoft-edge",
+    "safari",
+    "opera",
+    "vivaldi",
+    "zen",
+    "zen-browser",
+    "tor",
+    "tor-browser",
+    "org.mozilla.firefox",
+    "org.chromium.chromium",
+    "com.brave.browser",
+    "com.google.chrome",
+    "epiphany",
+    "librewolf",
+    "waterfox",
+    "unknown",
+    "none",
+    "terminal",
+    "x11",
+    "wayland",
+    "desktop",
+    "shell",
+    "python",
+    "python3",
+    "uv",
+    "bash",
+    "sh",
+    "zsh",
+    "fish",
+}
+
+# Multi-service portal domains and local network endpoints that must NOT be bound to specific categories.
+GENERIC_DOMAINS: Set[str] = {
+    "google.com",
+    "microsoft.com",
+    "apple.com",
+    "amazon.com",
+    "yahoo.com",
+    "localhost",
+    "127.0.0.1",
+    "0.0.0.0",
+    "host.lima.internal",
+    "lima.internal",
+    "t.co",
+    "bit.ly",
+    "tinyurl.com",
+    "ow.ly",
+    "goo.gl",
+    "example.com",
+}
+
 # Baseline regex keywords for each subcategory matching DEFAULT_TAXONOMY
 SUBCATEGORY_SEEDS: Dict[str, Dict[str, str]] = {
     "Development": {
@@ -29,7 +92,7 @@ SUBCATEGORY_SEEDS: Dict[str, Dict[str, str]] = {
     },
     "Communication": {
         "Team Chat": r"\b(slack|discord|element|mattermost|zulip|teams|microsoft teams)\b",
-        "Email": r"\b(thunderbird|evolution|gmail|proton|protonmail|kmail|mutt|neomutt|alpine|outlook)\b",
+        "Email": r"\b(thunderbird|evolution|gmail|proton|protonmail|kmail|mutt|neomutt|alpine|outlook|mailbox\.org|app\.mailbox\.org)\b",
         "Calls & Meetings": r"\b(zoom|meet|google meet|webex|jitsi|bluejeans|call|huddle)\b",
     },
     "Browsing & Research": {
@@ -81,24 +144,41 @@ def build_activitywatch_classes(
             continue
         discovered_keywords.setdefault(cat, {}).setdefault(sub, set())
 
-        # Extract applications
+        # Extract applications (ignoring generic browsers and system shells)
         app_match = re.search(r"app:([^\s]+)", feat)
         if app_match:
-            app_val = app_match.group(1).strip()
-            if len(app_val) > 2 and app_val not in ("unknown", "none", "browser"):
+            app_val = app_match.group(1).strip().lower()
+            if (
+                len(app_val) > 2
+                and app_val not in GENERIC_HOST_APPS
+                and not any(b in app_val for b in ("brave", "firefox", "chromium", "chrome", "edge", "safari"))
+            ):
                 discovered_keywords[cat][sub].add(re.escape(app_val))
 
-        # Extract domains and URLs
+        # Extract domains (ignoring multi-service roots like google.com and local endpoints)
         domain_match = re.search(r"domain:([^\s]+)", feat)
         if domain_match:
-            dom_val = domain_match.group(1).strip()
-            if len(dom_val) > 3 and "." in dom_val and not dom_val.startswith("127."):
+            dom_val = domain_match.group(1).strip().lower()
+            if (
+                len(dom_val) > 3
+                and "." in dom_val
+                and dom_val not in GENERIC_DOMAINS
+                and not dom_val.startswith(("127.", "0.0.0.0", "192.168.", "10."))
+                and not re.search(r"[<>:]", dom_val)
+            ):
                 discovered_keywords[cat][sub].add(re.escape(dom_val))
 
+        # Extract root domains (only if not a multi-service portal domain like google.com)
         root_match = re.search(r"root_domain:([^\s]+)", feat)
         if root_match:
-            root_val = root_match.group(1).strip()
-            if len(root_val) > 3 and "." in root_val and not root_val.startswith("127."):
+            root_val = root_match.group(1).strip().lower()
+            if (
+                len(root_val) > 3
+                and "." in root_val
+                and root_val not in GENERIC_DOMAINS
+                and not root_val.startswith(("127.", "0.0.0.0", "192.168.", "10."))
+                and not re.search(r"[<>:]", root_val)
+            ):
                 discovered_keywords[cat][sub].add(re.escape(root_val))
 
     classes: List[Dict[str, Any]] = []
