@@ -50,3 +50,15 @@ def test_serve_ui():
     response = client.get("/")
     assert response.status_code == 200
     assert "ActivityWatch Classifier" in response.text
+
+
+def test_llama_server_endpoints():
+    response = client.post("/api/llama-server/download")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "installed"
+    assert "binary_path" in data
+
+    stop_resp = client.post("/api/llama-server/stop")
+    assert stop_resp.status_code == 200
+    assert stop_resp.json()["status"] == "stopped"

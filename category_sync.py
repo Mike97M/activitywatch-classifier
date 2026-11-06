@@ -75,18 +75,13 @@ TERMINAL_APPS: Set[str] = {
     "terminator",
 }
 
-# Multi-service portal domains and local network endpoints that must NOT be bound to specific categories.
+# Multi-service portal domains that must NOT be bound to specific categories.
 GENERIC_DOMAINS: Set[str] = {
     "google.com",
     "microsoft.com",
     "apple.com",
     "amazon.com",
     "yahoo.com",
-    "localhost",
-    "127.0.0.1",
-    "0.0.0.0",
-    "host.lima.internal",
-    "lima.internal",
     "t.co",
     "bit.ly",
     "tinyurl.com",
@@ -98,31 +93,31 @@ GENERIC_DOMAINS: Set[str] = {
 # Baseline regex keywords for each subcategory matching DEFAULT_TAXONOMY
 SUBCATEGORY_SEEDS: Dict[str, Dict[str, str]] = {
     "Development": {
-        "Coding & IDE": r"\b(nvim|neovim|vim|gvim|code|vscode|vscodium|zed|sublime|sublime_text|pycharm|intellij|webstorm|clion|emacs|helix)\b",
-        "DevOps & Terminal": r"\b(foot|kitty|alacritty|ptyxis|gnome-terminal|konsole|xterm|bash|zsh|fish|tmux|screen|docker|podman|kubectl|ssh|ansible|terraform)\b",
+        "Coding & IDE": r"\b(nvim|neovim|vim|gvim|code|vscode|vscodium|zed|sublime|sublime_text|pycharm|intellij|webstorm|clion|emacs|helix|0\.0\.0\.0|localhost|activitywatch classifier|claude\.ai|chatgpt|aistudio)\b",
+        "DevOps & Terminal": r"\b(foot|kitty|alacritty|ptyxis|gnome-terminal|konsole|xterm|bash|zsh|fish|tmux|screen|docker|podman|kubectl|ssh|ansible|terraform|django|scraper|your-server\.de)\b",
         "Git & Code Review": r"\b(git|github|gitlab|bitbucket|lazygit|gitkraken|sourcetree|pull request|commit)\b",
         "Documentation & API": r"\b(docs|api|swagger|postman|insomnia|devdocs|manpage)\b",
         "Debugging & Testing": r"\b(gdb|valgrind|cargo test|pytest|unittest|profiler|debugger|inspect)\b",
     },
     "Communication": {
         "Team Chat": r"\b(slack|discord|element|mattermost|zulip|teams|microsoft teams)\b",
-        "Email": r"\b(thunderbird|evolution|gmail|proton|protonmail|kmail|mutt|neomutt|alpine|outlook|mailbox\.org|app\.mailbox\.org)\b",
+        "Email": r"\b(thunderbird|evolution|gmail|proton|protonmail|kmail|mutt|neomutt|alpine|outlook|mailbox\.org|app\.mailbox\.org|fastmail|webmail|roundcube|tutanota|yahoo mail|mail)\b",
         "Calls & Meetings": r"\b(zoom|meet|google meet|webex|jitsi|bluejeans|call|huddle)\b",
     },
     "Browsing & Research": {
         "Search & Exploration": r"\b(google search|duckduckgo|bing search|brave search|kagi|searx|wikipedia|search)\b",
-        "Technical Articles & Papers": r"\b(stackoverflow|stackexchange|github\.com|gitlab\.com|readthedocs|developer\.mozilla|python\.org|pkg\.go\.dev|crates\.io|huggingface|arxiv)\b",
+        "Technical Articles & Papers": r"\b(stackoverflow|stackexchange|github\.com|gitlab\.com|readthedocs|developer\.mozilla|python\.org|pkg\.go\.dev|crates\.io|huggingface|arxiv|artificialanalysis|coingecko)\b",
         "Shopping & E-Commerce": r"\b(amazon|ebay|aliexpress|shopify|cart|checkout)\b",
     },
     "Productivity & Planning": {
-        "Notes & Knowledge Base": r"\b(obsidian|notion|confluence|evernote|logseq|joplin|onenote|wiki)\b",
+        "Notes & Knowledge Base": r"\b(obsidian|notion|confluence|evernote|logseq|joplin|onenote|wiki|duolingo)\b",
         "Task & Project Management": r"\b(jira|trello|asana|linear|todoist|ticktick|omnifocus|kanban)\b",
         "Docs & Spreadsheets": r"\b(libreoffice|google docs|google sheets|calibre|evince|okular|excel|word|calc)\b",
     },
     "Media & Entertainment": {
         "Video & Streaming": r"\b(youtube|twitch|netflix|plex|jellyfin|vlc|mpv|kodi|prime video|disney\+|bilibili)\b",
         "Music & Audio": r"\b(spotify|youtube music|soundcloud|tidal|deezer|rhythmbox|audacious|podcast)\b",
-        "Gaming": r"\b(steam|lutris|heroic|retroarch|minecraft|steamwebhelper|game)\b",
+        "Gaming": r"\b(steam|lutris|heroic|retroarch|minecraft|steamwebhelper|game|sudoku|chess|puzzle)\b",
     },
     "Social Media": {
         "X / Twitter": r"\b(home / x|twitter|x\.com)\b",
@@ -130,8 +125,8 @@ SUBCATEGORY_SEEDS: Dict[str, Dict[str, str]] = {
         "LinkedIn & Professional": r"\b(linkedin)\b",
     },
     "System & Admin": {
-        "OS & Desktop Settings": r"\b(gnome-control-center|systemsettings|pavucontrol|gparted|settings|control center)\b",
-        "Hardware & System Monitor": r"\b(htop|btop|top|system-monitor|sensors|nvtop)\b",
+        "OS & Desktop Settings": r"\b(gnome-control-center|systemsettings|pavucontrol|gparted|settings|control center|launcher|system launcher|clock|wellbeing|shelter)\b",
+        "Hardware & System Monitor": r"\b(htop|btop|top|system-monitor|sensors|nvtop|activitywatch|127\.0\.0\.1:5600)\b",
         "Package Management": r"\b(nautilus|dolphin|thunar|mediawriter|dnf|rpm|zypper|apt|pacman|flatpak)\b",
     },
     "Uncategorized": {

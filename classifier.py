@@ -24,6 +24,39 @@ from config import (
 logger = logging.getLogger("classifier")
 
 
+def is_email_feature_text(feature_text: str) -> bool:
+    """Identify email clients, webmail domains, and inbox titles to prevent misclassification as browsing."""
+    f_lower = feature_text.lower()
+    
+    if re.search(r'\bapp:(thunderbird|evolution|kmail|mutt|neomutt|alpine|k9mail|k-9 mail|geary|claws-mail|mailspring)\b', f_lower):
+        return True
+    if any(p in f_lower for p in ['package:com.google.android.gm', 'package:com.yahoo.mobile.client.android.mail', 'package:ch.protonmail.android', 'package:de.heinlein.mailbox']):
+        return True
+
+    email_domains = (
+        'mail.google.com', 'gmail.com', 'mailbox.org', 'app.mailbox.org',
+        'account.mailbox.org', 'proton.me', 'mail.proton.me', 'protonmail.com',
+        'outlook.live.com', 'outlook.office.com', 'outlook.office365.com',
+        'mail.yahoo.com', 'mail.aol.com', 'mail.zoho.com', 'fastmail.com',
+        'app.fastmail.com', 'tuta.com', 'tutanota.com', 'mail.tuta.com',
+    )
+    if any(f'domain:{d}' in f_lower or f'root_domain:{d}' in f_lower or f'url:https://{d}' in f_lower or f'url:http://{d}' in f_lower for d in email_domains):
+        return True
+    if 'domain:webmail.' in f_lower or 'root_domain:webmail.' in f_lower:
+        return True
+
+    if re.search(r'\btitle:[^u]*\b(gmail|proton\s*mail|mailbox\.org|app\.mailbox\.org|yahoo\s*mail|fastmail|k9mail)\b', f_lower):
+        return True
+    if 'outlook' in f_lower and any(w in f_lower for w in ['mail', 'inbox', 'drafts', 'sent', 'message']):
+        return True
+    if re.search(r'\btitle:[^u]*\b(inbox|unread|drafts|sent mail|spam|compose)\b', f_lower) and any(
+        k in f_lower for k in ['mail', 'outlook', 'google', 'office', 'yahoo', 'proton', 'email']
+    ):
+        return True
+
+    return False
+
+
 class FastClassifier:
     """Fast, local classifier providing real-time hierarchical predictions and calibrated confidence scores."""
 
@@ -147,6 +180,7 @@ class FastClassifier:
         app = str(clean_data.get("app") or "").strip().lower()
         title = str(clean_data.get("title") or "").strip().lower()
         url = str(clean_data.get("url") or "").strip().lower()
+        package = str(clean_data.get("package") or "").strip().lower()
 
         domain = ""
         root_domain = ""
@@ -174,7 +208,7 @@ class FastClassifier:
                 root_domain = ""
 
         path_str = " ".join(path_words[:6])
-        return f"app:{app} domain:{domain} root_domain:{root_domain} path:{path_str} title:{title} url:{url}"
+        return f"app:{app} package:{package} domain:{domain} root_domain:{root_domain} path:{path_str} title:{title} url:{url}"
 
     def predict(self, feature_text: str) -> Tuple[str, float, Dict[str, float]]:
         """Predict full category (Category > Subcategory) and confidence score."""
@@ -200,6 +234,8 @@ class FastClassifier:
         self, feature_text: str
     ) -> Tuple[str, str, str, float, Dict[str, float]]:
         """Predict category, subcategory, full_category, and confidence score."""
+        if is_email_feature_text(feature_text):
+            return ("Communication", "Email", "Communication > Email", 0.98, {"Communication > Email": 0.98})
         full_cat, conf, probs = self.predict(feature_text)
         cat, subcat = split_category_path(full_cat)
         return (cat, subcat, full_cat, conf, probs)

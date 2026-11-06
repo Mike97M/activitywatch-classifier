@@ -195,7 +195,17 @@ async function fetchBuckets() {
       const isAfk = binfo.type === "afkstatus" || bLower.includes("afk");
       if (isAfk) continue;
 
-      const isWindowOrWeb = bid.includes("window") || bid.includes("web");
+      const btype = (binfo.type || "").toLowerCase();
+      const isWindowOrWeb =
+        (btype === "currentwindow" ||
+         btype === "web.tab.current" ||
+         bLower.includes("window") ||
+         bLower.includes("web") ||
+         bLower.includes("android")) &&
+        !bLower.includes("unlock") &&
+        !bLower.includes("test") &&
+        btype !== "os.lockscreen.unlocks" &&
+        btype !== "general.stopwatch";
       const client = binfo.client || "watcher";
       const type = binfo.type || "unknown";
 
@@ -922,7 +932,7 @@ function setupEventListeners() {
 
   document.getElementById("setting-gemma-backend").addEventListener("change", (e) => {
     const val = e.target.value;
-    document.getElementById("local-options").classList.toggle("hidden", val !== "local");
+    document.getElementById("local-options").classList.toggle("hidden", val !== "local" && val !== "llama_server");
     document.getElementById("ollama-options").classList.toggle("hidden", val !== "ollama");
     document.getElementById("gemini-options").classList.toggle("hidden", val !== "gemini_api");
   });

@@ -31,11 +31,13 @@ class ClassificationPipeline:
         classifier: Optional[FastClassifier] = None,
         gemma_oracle: Optional[GemmaOracle] = None,
         confidence_threshold: float = DEFAULT_CONFIDENCE_THRESHOLD,
+        max_streams: int = 10,
     ):
         self.aw_client = aw_client or AWClient()
         self.classifier = classifier or FastClassifier()
         self.gemma_oracle = gemma_oracle or GemmaOracle(taxonomy=self.classifier.taxonomy)
         self.confidence_threshold = confidence_threshold
+        self.max_streams = max_streams
 
         self.last_run_stats: Dict[str, Any] = {}
 
@@ -53,8 +55,10 @@ class ClassificationPipeline:
         afk_bucket_id: Optional[str] = None,
         progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
         collect_training_data: bool = True,
+        max_streams: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Clone events from source buckets by count or time range, filter AFK intervals, and classify."""
+        active_streams = max_streams if max_streams is not None else self.max_streams
         threshold = (
             confidence_threshold
             if confidence_threshold is not None
@@ -124,6 +128,9 @@ class ClassificationPipeline:
             except Exception as e:
                 logger.error(f"Failed to fetch events from {source_id}: {e}")
                 continue
+
+            # Skip 0-duration and instantaneous focus flicker events
+            events = [ev for ev in events if float(ev.get("duration", 0.0)) > 0.0]
 
             raw_event_count = len(events)
             total_raw_events += raw_event_count
@@ -241,6 +248,9 @@ class ClassificationPipeline:
                     clean_data["app"] = app
 
             title = clean_data.get("title", "")
+            if not title and app:
+                title = app
+                clean_data["title"] = app
             url = clean_data.get("url", "")
             feature_text = self.classifier.extract_features(clean_data)
 
@@ -294,8 +304,22 @@ class ClassificationPipeline:
                     "percent": 30.0,
                 })
 
+            def on_gemma_batch_progress(done_count: int, total_count: int):
+                if progress_callback:
+                    pct = 30.0 + (float(done_count) / max(1, total_count)) * 50.0
+                    progress_callback({
+                        "step": "gemma_batch",
+                        "current": done_count,
+                        "total": total_count,
+                        "percent": round(pct, 1),
+                        "message": f"Evaluating activities with Gemma: {done_count}/{total_count} ({pct:.1f}%)...",
+                    })
+
             gemma_results = self.gemma_oracle.classify_batch(
-                activities_to_batch, taxonomy=self.classifier.taxonomy, max_streams=8
+                activities_to_batch,
+                taxonomy=self.classifier.taxonomy,
+                max_streams=active_streams,
+                progress_callback=on_gemma_batch_progress,
             )
 
             for sig, gemma_res in zip(unique_sigs, gemma_results):
@@ -379,7 +403,7 @@ class ClassificationPipeline:
                 )
 
             if progress_callback and (total_processed % 20 == 0 or total_processed == total_to_classify):
-                pct = 20.0 + (float(total_processed) / max(1, total_to_classify)) * 60.0
+                pct = 80.0 + (float(total_processed) / max(1, total_to_classify)) * 5.0
                 progress_callback(
                     {
                         "step": "classifying",

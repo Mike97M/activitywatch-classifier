@@ -327,4 +327,39 @@ def test_pipeline_audible_tab_afk_exception():
         assert "aw-watcher-web-firefox_fedora" in stats["audible_buckets_used"]
 
 
+def test_pipeline_skips_zero_duration_events():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model_path = Path(tmpdir) / "model.joblib"
+        data_path = Path(tmpdir) / "data.jsonl"
+
+        mock_aw = MagicMock()
+        mock_aw.find_afk_bucket_for_source.return_value = None
+        mock_aw.create_bucket.return_value = {"id": "test-target", "created": True}
+        mock_aw.get_events.return_value = [
+            {"timestamp": "2026-11-05T12:00:00Z", "duration": 45.0, "data": {"app": "foot", "title": "terminal"}},
+            {"timestamp": "2026-11-05T12:01:00Z", "duration": 0.0, "data": {"app": "foot", "title": "flicker 0s"}},
+            {"timestamp": "2026-11-05T12:02:00Z", "duration": -5.0, "data": {"app": "foot", "title": "negative 0s"}},
+            {"timestamp": "2026-11-05T12:03:00Z", "duration": 30.0, "data": {"app": "Brave-browser", "title": "Gmail", "url": "https://mail.google.com"}},
+        ]
+        mock_aw.insert_events.side_effect = lambda bucket_id, evs: evs
+
+        classifier = FastClassifier(model_path=model_path, training_data_path=data_path)
+        oracle = GemmaOracle(backend="heuristic")
+        pipeline = ClassificationPipeline(aw_client=mock_aw, classifier=classifier, gemma_oracle=oracle)
+
+        stats = pipeline.run(
+            source_bucket_ids=["source_bucket_1"],
+            target_bucket_id="test-target",
+            filter_afk=False,
+        )
+
+        # 0s and negative events must be skipped
+        assert stats["total_raw_events_fetched"] == 2
+        assert stats["total_events_processed"] == 2
+        # And the Gmail browser activity must be Communication > Email, not Browsing
+        cat_dist = stats["category_distribution"]
+        assert cat_dist.get("Communication") == 1
+        assert cat_dist.get("Browsing & Research", 0) == 0
+
+
 

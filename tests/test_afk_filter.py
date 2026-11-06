@@ -361,7 +361,8 @@ def test_find_web_buckets_for_source(monkeypatch):
         "aw-watcher-afk_laptop": {"hostname": "laptop", "type": "afkstatus"},
         "aw-watcher-android-synced-from-oneplus_12": {"hostname": "oneplus_12", "type": "currentwindow"},
         "aw-watcher-android-web-synced-from-oneplus_12": {"hostname": "oneplus_12", "type": "web.tab.current"},
-        "aw-watcher-web_classified": {"hostname": "classified", "type": "web.tab.current"},
+        "aw-watcher-web-brave_classified": {"hostname": "classified", "type": "web.tab.current"},
+        "aw-watcher-web-firefox_classified": {"hostname": "classified", "type": "web.tab.current"},
     }
 
     monkeypatch.setattr(client, "list_buckets", lambda: mock_buckets)

@@ -5,7 +5,7 @@ import logging
 import os
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 import httpx
 
 from config import (
@@ -137,13 +137,109 @@ class GemmaOracle:
         activities: List[Dict[str, Any]],
         taxonomy: Optional[Dict[str, List[str]]] = None,
         max_streams: int = 8,
+        progress_callback: Optional[Callable[[int, int], None]] = None,
     ) -> List[Dict[str, Any]]:
         """Classify a list of activities, using multi-stream parallel decoding with 1 memory pass for local Gemma."""
         if not activities:
             return []
         tax = taxonomy or self.taxonomy
         if self.backend in ["local", "llama_cpp"]:
-            return self.classify_parallel_streams(activities, tax, max_streams=max_streams)
+            chunk_size = min(max(1, max_streams), 12)
+            results = []
+            for i in range(0, len(activities), chunk_size):
+                chunk = activities[i : i + chunk_size]
+                if len(chunk) == 1:
+                    a = chunk[0]
+                    prompt = self._build_prompt(a.get("app", ""), a.get("title", ""), a.get("url"), tax)
+                    res = self._call_llama_cpp(prompt, tax)
+                    if not res or res.get("category") not in tax:
+                        res = self._smart_heuristic_classify(a.get("app", ""), a.get("title", ""), a.get("url"), tax)
+                        res["reasoning"] = f"{res.get('reasoning', '')} (Fallback from local Gemma)"
+                    results.append(res)
+                else:
+                    batch_prompt = self._build_batch_prompt(chunk, tax)
+                    chunk_res_map = {}
+                    try:
+                        model_path = self.find_local_model_path()
+                        if not model_path:
+                            raise FileNotFoundError("Local Gemma model not found")
+                        if self._llama_model is None:
+                            from llama_cpp import Llama
+                            logger.info(f"Loading local Gemma model in-process from: {model_path}...")
+                            self._llama_model = Llama(
+                                model_path=str(model_path),
+                                n_ctx=4096,
+                                n_threads=4,
+                                verbose=False,
+                                flash_attn=True,
+                            )
+                        out = self._llama_model.create_chat_completion(
+                            messages=[
+                                {"role": "system", "content": "You are Gemma E2B, an expert activity classifier."},
+                                {"role": "user", "content": batch_prompt},
+                            ],
+                            temperature=0.1,
+                            max_tokens=len(chunk) * 75 + 100,
+                        )
+                        text = out["choices"][0]["message"]["content"]
+                        parsed_items = self._parse_llm_json_batch(text, tax)
+                        for item in parsed_items:
+                            item_id = item.get("id")
+                            if item_id is not None:
+                                item["backend"] = f"local_gguf_batch ({model_path.name})"
+                                chunk_res_map[item_id] = item
+                    except Exception as e:
+                        logger.error(f"Batch Gemma execution error: {e}")
+
+                    for c_idx, a in enumerate(chunk):
+                        act_id = a.get("id", c_idx)
+                        if act_id in chunk_res_map:
+                            results.append(chunk_res_map[act_id])
+                        elif c_idx in chunk_res_map:
+                            results.append(chunk_res_map[c_idx])
+                        else:
+                            h = self._smart_heuristic_classify(a.get("app", ""), a.get("title", ""), a.get("url"), tax)
+                            h["reasoning"] = f"{h.get('reasoning', '')} (Fallback from batch Gemma)"
+                            results.append(h)
+
+                if progress_callback:
+                    progress_callback(len(results), len(activities))
+            return results
+
+        if self.backend in ["llama_server", "llama-server"]:
+            try:
+                from llama_server_manager import llama_server
+                model_path = self.find_local_model_path()
+                if model_path:
+                    self.openai_url = llama_server.ensure_server(model_path)
+            except Exception as e:
+                logger.error(f"Failed to ensure llama-server: {e}")
+
+            import concurrent.futures
+            from llama_server_manager import llama_server
+            workers = min(max(1, max_streams), llama_server.n_parallel)
+            results = [None] * len(activities)
+
+            def _eval_one(idx, a):
+                prompt = self._build_prompt(a.get("app", ""), a.get("title", ""), a.get("url"), tax)
+                res = self._call_openai_compatible(prompt, tax)
+                if not res or res.get("category") not in tax:
+                    res = self._smart_heuristic_classify(a.get("app", ""), a.get("title", ""), a.get("url"), tax)
+                    res["reasoning"] = f"{res.get('reasoning', '')} (Fallback from llama-server)"
+                else:
+                    res["backend"] = "llama_server"
+                return idx, res
+
+            done_count = 0
+            with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
+                futures = [executor.submit(_eval_one, i, a) for i, a in enumerate(activities)]
+                for fut in concurrent.futures.as_completed(futures):
+                    i, res = fut.result()
+                    results[i] = res
+                    done_count += 1
+                    if progress_callback:
+                        progress_callback(done_count, len(activities))
+            return results
 
         results = []
         for a in activities:
@@ -356,8 +452,16 @@ class GemmaOracle:
             f"{taxonomy_text}\n\n"
             f"Classification Rules:\n"
             f"1. Terminal emulators (foot, kitty, alacritty, ptyxis, konsole, gnome-terminal, xterm, wezterm, etc.) and shell prompts/sessions ('<user>@<host>', '~', bash, fish, zsh, tmux, ssh, cli commands) MUST ALWAYS be categorized as category 'Development', subcategory 'DevOps & Terminal'. NEVER categorize shell/terminal activities as 'System & Admin'.\n"
-            f"2. 'System & Admin' is reserved strictly for OS system settings dialogs, hardware monitors (htop, btop), and package management tools.\n"
-            f"3. For web browsers, categorize based on the website domain and URL path content rather than the generic browser application.\n\n"
+            f"2. 'System & Admin' is reserved strictly for OS system settings dialogs, hardware monitors (htop, btop), local activity trackers (ActivityWatch web UI), and package management tools.\n"
+            f"3. For web browser activities, do NOT lazily dump activities into 'Browsing & Research > Search & Exploration'. Categorize based on the website domain, URL path, and actual function:\n"
+            f"   - Local dev servers (localhost, 127.0.0.1, 0.0.0.0, dev ports), admin consoles (Django site admin, scraper dashboards, Grafana), code repositories (GitHub, GitLab, 'user/repo' titles), and AI assistants/LLMs (Claude, ChatGPT, Gemini, AI Studio) MUST be categorized under 'Development' (DevOps & Terminal, Coding & IDE, or Git & Code Review).\n"
+            f"   - Local activity monitors (ActivityWatch web UI) belong to 'System & Admin > Hardware & System Monitor'.\n"
+            f"   - Webmail services and email inboxes accessed in a browser (Gmail, Proton Mail, Mailbox.org, Outlook/Office365, Yahoo Mail, Fastmail, webmail) MUST ALWAYS be categorized as 'Communication > Email'. NEVER categorize web email as 'Browsing & Research'.\n"
+            f"   - Project management (Jira, Linear), notes (Notion), and office/spreadsheets (Google Docs/Sheets, Grist) belong to 'Productivity & Planning'.\n"
+            f"   - Tech blogs, benchmarks (Artificial Analysis), engineering discussions (Hacker News), financial market charts, and research papers belong to 'Browsing & Research > Technical Articles & Papers'.\n"
+            f"   - Online shopping, retail, and store sites belong to 'Browsing & Research > Shopping & E-Commerce'.\n"
+            f"   - Blank new browser tabs ('New Tab', 'chrome://newtab', 'about:blank') belong to 'Uncategorized > General Activity'.\n"
+            f"   - ONLY actual web search engines (Google Search, DuckDuckGo, Brave Search) or exploratory general browsing belong to 'Browsing & Research > Search & Exploration'.\n\n"
             f"Activity Details:\n"
             f"- Application: {app or 'browser'}\n"
             f"- Window / Tab Title: {title or 'unknown'}\n"
@@ -404,8 +508,16 @@ class GemmaOracle:
             f"{taxonomy_text}\n\n"
             f"Classification Rules:\n"
             f"1. Terminal emulators (foot, kitty, alacritty, ptyxis, konsole, gnome-terminal, xterm, wezterm, etc.) and shell prompts/sessions ('<user>@<host>', '~', bash, fish, zsh, tmux, ssh) MUST ALWAYS be categorized as category 'Development', subcategory 'DevOps & Terminal'. NEVER categorize terminal shells as 'System & Admin'.\n"
-            f"2. 'System & Admin' is reserved strictly for OS system settings dialogs, hardware monitors (htop, btop), and package management tools.\n"
-            f"3. For web browsers, categorize based on the website domain and URL path content rather than the generic browser application.\n\n"
+            f"2. 'System & Admin' is reserved strictly for OS system settings dialogs, hardware monitors (htop, btop), local activity trackers (ActivityWatch web UI), and package management tools.\n"
+            f"3. For web browser activities, do NOT lazily dump activities into 'Browsing & Research > Search & Exploration'. Categorize based on the website domain, URL path, and actual function:\n"
+            f"   - Local dev servers (localhost, 127.0.0.1, 0.0.0.0, dev ports), admin consoles (Django site admin, scraper dashboards, Grafana), code repositories (GitHub, GitLab, 'user/repo' titles), and AI assistants/LLMs (Claude, ChatGPT, Gemini, AI Studio) MUST be categorized under 'Development' (DevOps & Terminal, Coding & IDE, or Git & Code Review).\n"
+            f"   - Local activity monitors (ActivityWatch web UI) belong to 'System & Admin > Hardware & System Monitor'.\n"
+            f"   - Webmail services and email inboxes accessed in a browser (Gmail, Proton Mail, Mailbox.org, Outlook/Office365, Yahoo Mail, Fastmail, webmail) MUST ALWAYS be categorized as 'Communication > Email'. NEVER categorize web email as 'Browsing & Research'.\n"
+            f"   - Project management (Jira, Linear), notes (Notion), and office/spreadsheets (Google Docs/Sheets, Grist) belong to 'Productivity & Planning'.\n"
+            f"   - Tech blogs, benchmarks (Artificial Analysis), engineering discussions (Hacker News), financial market charts, and research papers belong to 'Browsing & Research > Technical Articles & Papers'.\n"
+            f"   - Online shopping, retail, and store sites belong to 'Browsing & Research > Shopping & E-Commerce'.\n"
+            f"   - Blank new browser tabs ('New Tab', 'chrome://newtab', 'about:blank') belong to 'Uncategorized > General Activity'.\n"
+            f"   - ONLY actual web search engines (Google Search, DuckDuckGo, Brave Search) or exploratory general browsing belong to 'Browsing & Research > Search & Exploration'.\n\n"
             f"Activities to categorize:\n"
             f"{activities_formatted}\n\n"
             f"Respond with ONLY a valid JSON array of objects, one for each activity in the exact same order:\n"
@@ -614,21 +726,25 @@ class GemmaOracle:
     def _call_openai_compatible(
         self, prompt: str, taxonomy: Dict[str, List[str]]
     ) -> Dict[str, Any]:
-        """Query any OpenAI-compatible server (vLLM, LMStudio, LocalAI)."""
+        """Query any OpenAI-compatible server (llama-server, vLLM, LMStudio, LocalAI)."""
         try:
-            url = f"{self.openai_url.rstrip('/')}/chat/completions"
+            base = (self.openai_url or "http://127.0.0.1:8088/v1").rstrip("/")
+            url = f"{base}/chat/completions"
             headers = {}
             if self.openai_key:
                 headers["Authorization"] = f"Bearer {self.openai_key}"
             payload = {
-                "model": self.model_name,
+                "model": self.model_name or "local",
                 "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.2,
+                "temperature": 0.1,
+                "max_tokens": 150,
             }
-            with httpx.Client(timeout=15.0) as client:
+            with httpx.Client(timeout=45.0) as client:
                 resp = client.post(url, json=payload, headers=headers)
                 resp.raise_for_status()
-                content = resp.json()["choices"][0]["message"]["content"]
+                data = resp.json()
+                msg = data["choices"][0]["message"]
+                content = (msg.get("content") or msg.get("reasoning_content") or "").strip()
                 parsed = self._parse_llm_json(content, taxonomy)
                 if parsed:
                     return parsed
@@ -646,10 +762,14 @@ class GemmaOracle:
         """Granular heuristic classifier outputting Category and Subcategory with domain awareness."""
         parsed_domain = ""
         root_domain = ""
-        if url:
+        url_clean = (url or "").strip().lower()
+        title_clean = (title or "").strip().lower()
+        app_clean = (app or "").strip().lower()
+
+        if url_clean:
             try:
                 from urllib.parse import urlparse
-                test_url = url if "://" in url else f"https://{url}"
+                test_url = url_clean if "://" in url_clean else f"https://{url_clean}"
                 p = urlparse(test_url)
                 netloc = p.netloc.lower().split(":")[0]
                 parsed_domain = netloc
@@ -662,7 +782,7 @@ class GemmaOracle:
                 parsed_domain = ""
                 root_domain = ""
 
-        combined = f"{app} {title} {url or ''} {parsed_domain} {root_domain}".lower()
+        combined = f"{app_clean} {title_clean} {url_clean} {parsed_domain} {root_domain}".lower()
 
         def pick_sub(cat: str, target_sub: str) -> str:
             subs = taxonomy.get(cat, ["General"])
@@ -671,15 +791,26 @@ class GemmaOracle:
                     return s
             return subs[0] if subs else "General"
 
-        category = "Uncategorized"
-        subcategory = "General Activity"
-        reason = "Matched by domain heuristic"
+        # -1. Blank or New Browser Tab
+        if (
+            title_clean in ("new tab", "new tab - brave", "new tab — mozilla firefox", "about:blank", "about:newtab", "chrome://newtab", "")
+            or title_clean.startswith("new tab - ")
+            or title_clean.startswith("new tab — ")
+        ) and (not url_clean or url_clean in ("about:blank", "about:newtab", "chrome://newtab/", "chrome://newtab")):
+            sub = pick_sub("Uncategorized", "General Activity")
+            return {
+                "category": "Uncategorized",
+                "subcategory": sub,
+                "full_category": f"Uncategorized > {sub}",
+                "confidence": 0.95,
+                "reasoning": "Blank new browser tab or empty page",
+                "backend": "gemma_heuristic_proxy",
+            }
 
         # 0. Terminal Emulators & Command-line Shells
         terminal_apps = {"foot", "kitty", "alacritty", "ptyxis", "gnome-terminal", "konsole", "xterm", "wezterm", "urxvt", "terminator"}
-        app_clean = (app or "").strip().lower()
         is_terminal = app_clean in terminal_apps or any(term in combined for term in ["bash", "zsh", "fish", "tmux", "sshfs"])
-        if is_terminal or re.search(r"@[a-zA-Z0-9_.-]+:[~/\w.-]*", title) or title.strip() in ("~", "foot"):
+        if is_terminal or re.search(r"@[a-zA-Z0-9_.-]+:[~/\w.-]*", title or "") or title_clean in ("~", "foot"):
             if any(mon in combined for mon in ["btop", "htop", "nvtop", "system-monitor", "sensors"]):
                 category = "System & Admin"
                 subcategory = pick_sub("System & Admin", "Hardware & System Monitor")
@@ -701,44 +832,172 @@ class GemmaOracle:
                 "backend": "gemma_heuristic_proxy",
             }
 
+        # 0.5. Local Development Servers, Localhost & ActivityWatch
+        is_localhost = any(h in parsed_domain or h in url_clean for h in ["127.0.0.1", "0.0.0.0", "localhost", "lima.internal", ":5000", ":5600", ":8000", ":3000", ":5173", ":8080"])
+        if is_localhost:
+            if "classifier" in combined:
+                category = "Development"
+                subcategory = pick_sub("Development", "Coding & IDE")
+                reason = "ActivityWatch Classifier active learning UI"
+            elif "activitywatch" in combined:
+                category = "System & Admin"
+                subcategory = pick_sub("System & Admin", "Hardware & System Monitor")
+                reason = "ActivityWatch local system activity monitor"
+            elif any(adm in combined for adm in ["django", "admin", "phpmyadmin", "grafana", "kibana", "prometheus"]):
+                category = "Development"
+                subcategory = pick_sub("Development", "DevOps & Terminal")
+                reason = "Local administrative interface or dev server dashboard"
+            else:
+                category = "Development"
+                subcategory = pick_sub("Development", "DevOps & Terminal")
+                reason = "Local development server or test endpoint"
+            return {
+                "category": category,
+                "subcategory": subcategory,
+                "full_category": f"{category} > {subcategory}",
+                "confidence": 0.96,
+                "reasoning": reason,
+                "backend": "gemma_heuristic_proxy",
+            }
+
+        # 0.6. Remote Server Dashboards, Scrapers & Infrastructure
+        if any(s in combined for s in ["your-server.de", "scraper/dashboard", "hetzner", "cpanel", "portainer", "grafana", "kibana", "prometheus", "sentry.io", "datadog", "digitalocean", "cloudflare"]):
+            category = "Development"
+            subcategory = pick_sub("Development", "DevOps & Terminal")
+            reason = "Server management console, cloud infrastructure, or scraping dashboard"
+            return {
+                "category": category,
+                "subcategory": subcategory,
+                "full_category": f"{category} > {subcategory}",
+                "confidence": 0.96,
+                "reasoning": reason,
+                "backend": "gemma_heuristic_proxy",
+            }
+        elif "django site admin" in combined or "/admin" in url_clean:
+            category = "Development"
+            subcategory = pick_sub("Development", "DevOps & Terminal")
+            reason = "Django web application administrative interface"
+            return {
+                "category": category,
+                "subcategory": subcategory,
+                "full_category": f"{category} > {subcategory}",
+                "confidence": 0.96,
+                "reasoning": reason,
+                "backend": "gemma_heuristic_proxy",
+            }
+
+        # 0.7. Code Hosting & Git Repositories
+        is_git = (
+            any(s in combined for s in ["github.com", "gitlab.com", "bitbucket.org", "gitea", "codeberg"])
+            or bool(re.match(r"^[a-zA-Z0-9_\-\.]+/[a-zA-Z0-9_\-\.]+(?:\s*[-—|:]\s*.*)?$", title_clean))
+        )
+        if is_git:
+            category = "Development"
+            subcategory = pick_sub("Development", "Git & Code Review")
+            reason = "Version control repository or code review"
+            return {
+                "category": category,
+                "subcategory": subcategory,
+                "full_category": f"{category} > {subcategory}",
+                "confidence": 0.96,
+                "reasoning": reason,
+                "backend": "gemma_heuristic_proxy",
+            }
+
+        # 0.8. AI Developer Tools & LLM Workspaces
+        is_ai_coding = any(s in combined for s in [
+            "claude.ai", "chatgpt", "openai.com", "aistudio.google.com", "gemini.google.com",
+            "huggingface.co", "openrouter.ai", "colab.research.google.com", "kaggle.com", "jupyter",
+            "modal.com", "replicate.com", "v0.dev"
+        ])
+        if is_ai_coding:
+            category = "Development"
+            subcategory = pick_sub("Development", "Coding & IDE")
+            reason = "AI developer assistant, LLM workspace, or interactive notebook"
+            return {
+                "category": category,
+                "subcategory": subcategory,
+                "full_category": f"{category} > {subcategory}",
+                "confidence": 0.96,
+                "reasoning": reason,
+                "backend": "gemma_heuristic_proxy",
+            }
+
+        # 0.9. Programming Docs & APIs
+        is_dev_docs = any(s in combined for s in [
+            "stackoverflow.com", "devdocs.io", "developer.mozilla.org", "developer.android.com",
+            "readthedocs.io", "crates.io", "pypi.org", "pkg.go.dev", "npmjs.com"
+        ]) or any(k in combined for k in ["api reference", "documentation"])
+        if is_dev_docs:
+            category = "Development"
+            subcategory = pick_sub("Development", "Documentation & API")
+            reason = "Programming documentation or developer API reference"
+            return {
+                "category": category,
+                "subcategory": subcategory,
+                "full_category": f"{category} > {subcategory}",
+                "confidence": 0.96,
+                "reasoning": reason,
+                "backend": "gemma_heuristic_proxy",
+            }
+
+        # 0.10. Web Scraping & Crawling Tools
+        is_scraper = any(s in combined for s in ["serpextractor.com", "apify.com", "scrape.ly"])
+        if is_scraper:
+            category = "Development"
+            subcategory = pick_sub("Development", "Coding & IDE")
+            reason = "Web scraping or data extraction API service"
+            return {
+                "category": category,
+                "subcategory": subcategory,
+                "full_category": f"{category} > {subcategory}",
+                "confidence": 0.96,
+                "reasoning": reason,
+                "backend": "gemma_heuristic_proxy",
+            }
+
         # 1. Social Media
-        if any(sig in combined for sig in ["x.com", "twitter"]):
+        if any(sig in combined for sig in ["x.com", "twitter.com", "t.co"]):
             category = "Social Media"
             subcategory = pick_sub("Social Media", "X / Twitter")
             reason = "Detected X / Twitter microblogging"
-        elif any(sig in combined for sig in ["reddit"]):
+        elif any(sig in combined for sig in ["reddit.com", "old.reddit.com"]):
             category = "Social Media"
             subcategory = pick_sub("Social Media", "Reddit & Communities")
             reason = "Detected Reddit community browsing"
-        elif any(sig in combined for sig in ["linkedin"]):
+        elif any(sig in combined for sig in ["linkedin.com", "xing.com"]):
             category = "Social Media"
             subcategory = pick_sub("Social Media", "LinkedIn & Professional")
             reason = "Detected professional networking"
 
         # 2. Media & Entertainment
-        elif any(sig in combined for sig in ["youtube", "netflix", "twitch", "vlc", "mpv", "prime video"]):
+        elif any(sig in combined for sig in ["youtube", "youtu.be", "netflix", "twitch", "vlc", "mpv", "prime video"]):
             category = "Media & Entertainment"
             subcategory = pick_sub("Media & Entertainment", "Video & Streaming")
             reason = "Detected streaming video or media playback"
-        elif any(sig in combined for sig in ["spotify", "music", "podcast", "soundcloud"]):
+        elif any(sig in combined for sig in ["spotify", "music.youtube", "soundcloud", "deezer", "apple music", "tidal"]):
             category = "Media & Entertainment"
             subcategory = pick_sub("Media & Entertainment", "Music & Audio")
             reason = "Detected audio or music streaming"
-        elif any(sig in combined for sig in ["steam", "lutris", "heroic", "game", "retroarch"]):
+        elif any(sig in combined for sig in ["steam", "lutris", "heroic", "game", "retroarch", "sudoku", "chess", "puzzle"]):
             category = "Media & Entertainment"
             subcategory = pick_sub("Media & Entertainment", "Gaming")
             reason = "Detected gaming platform or application"
 
         # 3. Communication
-        elif any(sig in combined for sig in ["mail", "thunderbird", "outlook", "gmail", "inbox"]):
+        elif any(sig in combined for sig in [
+            "gmail", "mail.google", "mailbox.org", "app.mailbox.org", "account.mailbox.org",
+            "outlook", "office365", "proton.me", "protonmail", "fastmail", "webmail", "roundcube",
+            "thunderbird", "k9mail", "evolution", "kmail", "yahoo mail", "mail.yahoo", "tutanota", "tuta.com", "mail"
+        ]):
             category = "Communication"
             subcategory = pick_sub("Communication", "Email")
             reason = "Detected email client or inbox"
-        elif any(sig in combined for sig in ["zoom", "meet", "teams meeting", "call"]):
+        elif any(sig in combined for sig in ["zoom.us", "meet.google", "teams meeting", "calendly.com", "cal.com"]):
             category = "Communication"
             subcategory = pick_sub("Communication", "Calls & Meetings")
             reason = "Detected audio/video conference"
-        elif any(sig in combined for sig in ["slack", "discord", "telegram", "signal", "whatsapp", "teams"]):
+        elif any(sig in combined for sig in ["slack", "discord", "telegram", "signal", "whatsapp", "teams", "matrix", "element"]):
             category = "Communication"
             subcategory = pick_sub("Communication", "Team Chat")
             reason = "Detected team or personal instant messaging"
@@ -748,61 +1007,73 @@ class GemmaOracle:
             category = "Development"
             subcategory = pick_sub("Development", "DevOps & Terminal")
             reason = "Detected shell terminal, SSH session, or command-line environment"
-        elif any(sig in combined for sig in ["git", "github", "gitlab", "pull request", "commit", "diff", "bitbucket", "gitea"]):
-            category = "Development"
-            subcategory = pick_sub("Development", "Git & Code Review")
-            reason = "Detected version control or repository code review"
-        elif any(sig in combined for sig in ["stackoverflow", "devdocs", "api reference", "documentation", "man ", "developer.mozilla", "readthedocs", "crates.io", "pypi.org"]):
-            category = "Development"
-            subcategory = pick_sub("Development", "Documentation & API")
-            reason = "Detected programming documentation, crate/package registry, or StackOverflow"
-        elif any(sig in combined for sig in ["code", "vscode", "vscodium", "vim", "nvim", "pycharm", "rust", "cargo", "python", "serpextractor", "aistudio", "huggingface", "claude", "chatgpt", "openai", "colab", "kaggle", "jupyter"]):
+        elif any(sig in combined for sig in ["code", "vscode", "vscodium", "vim", "nvim", "pycharm", "rust", "cargo", "python"]):
             category = "Development"
             subcategory = pick_sub("Development", "Coding & IDE")
             reason = "Detected source code editor, AI developer tooling, or programming workspace"
 
         # 5. Productivity & Planning
-        elif any(sig in combined for sig in ["notion", "obsidian", "logseq", "wiki"]):
+        elif any(sig in combined for sig in ["notion.so", "obsidian.md", "logseq.com", "confluence", "wiki", "duolingo"]):
             category = "Productivity & Planning"
             subcategory = pick_sub("Productivity & Planning", "Notes & Knowledge Base")
-            reason = "Detected personal knowledge base or note-taking app"
-        elif any(sig in combined for sig in ["todoist", "jira", "trello", "linear", "task"]):
+            reason = "Detected personal knowledge base, learning, or note-taking app"
+        elif any(sig in combined for sig in ["jira", "linear.app", "trello.com", "asana.com", "todoist.com"]):
             category = "Productivity & Planning"
             subcategory = pick_sub("Productivity & Planning", "Task & Project Management")
             reason = "Detected project management or issue tracker"
-        elif any(sig in combined for sig in ["sheets", "calc", "excel", "docs", "writer", "libreoffice", "word"]):
+        elif any(sig in combined for sig in ["docs.google.com", "sheets.google.com", "getgrist.com", "airtable.com", "calc", "excel", "docs", "writer", "libreoffice", "word"]):
             category = "Productivity & Planning"
             subcategory = pick_sub("Productivity & Planning", "Docs & Spreadsheets")
             reason = "Detected office document or spreadsheet"
 
         # 6. System & Admin
-        elif any(sig in combined for sig in ["settings", "control", "gnome-control", "yast", "preferences"]):
+        elif any(sig in combined for sig in ["settings", "control", "gnome-control", "yast", "preferences", "launcher", "system launcher", "clock", "alarm", "wellbeing", "shelter"]):
             category = "System & Admin"
             subcategory = pick_sub("System & Admin", "OS & Desktop Settings")
-            reason = "Detected system settings or preferences"
-        elif any(sig in combined for sig in ["btop", "htop", "system monitor", "task manager"]):
+            reason = "Detected system settings, desktop utility, or launcher"
+        elif any(sig in combined for sig in ["btop", "htop", "system monitor", "task manager", "activitywatch"]):
             category = "System & Admin"
             subcategory = pick_sub("System & Admin", "Hardware & System Monitor")
-            reason = "Detected system resource monitor"
+            reason = "Detected system resource or activity monitor"
         elif any(sig in combined for sig in ["zypper", "pacman", "apt", "dnf", "package"]):
             category = "System & Admin"
             subcategory = pick_sub("System & Admin", "Package Management")
             reason = "Detected software package manager"
 
         # 7. Browsing & Research
-        elif url or "browser" in app.lower():
-            if any(sig in combined for sig in ["arxiv", "paper", "research", "rfc", "whitepaper"]):
+        elif url_clean or "browser" in app_clean:
+            is_tech_article = (
+                any(sig in combined for sig in [
+                    "arxiv", "paper", "research", "rfc", "whitepaper",
+                    "artificialanalysis.ai", "news.ycombinator.com", "hacker news", "lobste.rs",
+                    "medium.com", "substack.com", "dev.to", "hashnode", "benchmark", "leaderboard",
+                    "coding-agents", "evaluation dataset", "tokenbench",
+                    "tradingview.com", "price chart", "stock market", "financial analysis"
+                ])
+                or any(p in url_clean for p in ["/blog/", "/work/", "/posts/", "/article/", "/tutorial/"])
+            )
+            is_shopping = any(sig in combined for sig in ["amazon.", "ebay.", "aliexpress.", "finn.no", "nettbutikk", "cart", "checkout", "store", "shop"])
+            is_search = (
+                (any(s in parsed_domain for s in ["google.", "duckduckgo.", "brave.com", "bing.com", "kagi.com"]) and any(p in url_clean for p in ["/search", "?q="]))
+                or any(s in combined for s in ["- google search", "- brave search", "- duckduckgo search", "wikipedia.org", "wikimedia.org"])
+            )
+
+            if is_tech_article:
                 category = "Browsing & Research"
                 subcategory = pick_sub("Browsing & Research", "Technical Articles & Papers")
-                reason = "Detected research paper or technical publication"
-            elif any(sig in combined for sig in ["amazon", "ebay", "cart", "checkout", "store", "shop"]):
+                reason = "Technical article, research publication, benchmark, or market analysis"
+            elif is_shopping:
                 category = "Browsing & Research"
                 subcategory = pick_sub("Browsing & Research", "Shopping & E-Commerce")
-                reason = "Detected online shopping or retail website"
+                reason = "Online retail or shopping"
+            elif is_search:
+                category = "Browsing & Research"
+                subcategory = pick_sub("Browsing & Research", "Search & Exploration")
+                reason = "Web search engine query or encyclopedia exploration"
             else:
                 category = "Browsing & Research"
                 subcategory = pick_sub("Browsing & Research", "Search & Exploration")
-                reason = "General web search and page exploration"
+                reason = "General web browsing and page exploration"
         else:
             category = "Uncategorized"
             subcategory = pick_sub("Uncategorized", "General Activity")

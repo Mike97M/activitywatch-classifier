@@ -139,8 +139,10 @@ class AWClient:
             btype = binfo.get("type", "")
             # Identify web watcher buckets (excluding classifier generated or afk buckets)
             is_web = (
-                btype == "web.tab.current"
-                or ("web" in bid.lower() and "afk" not in bid.lower() and "classified" not in bid.lower())
+                (btype == "web.tab.current" or "web" in bid.lower())
+                and "afk" not in bid.lower()
+                and "classified" not in bid.lower()
+                and binfo.get("hostname") != "classified"
             )
             if not is_web:
                 continue
@@ -231,11 +233,17 @@ class AWClient:
                 inserted_results.extend(resp.json())
         return inserted_results
 
-    def delete_bucket(self, bucket_id: str) -> bool:
+    def delete_bucket(self, bucket_id: str, force: bool = False) -> bool:
         """Delete a bucket (useful for resetting the target bucket)."""
         try:
-            self._request("DELETE", f"/api/0/buckets/{bucket_id}")
-            return True
+            params = {"force": "1"} if force else {}
+            resp = self._request("DELETE", f"/api/0/buckets/{bucket_id}", params=params)
+            return resp.status_code in (200, 204)
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 404:
+                return False
+            logger.warning(f"Failed to delete bucket '{bucket_id}': {e}")
+            return False
         except Exception as e:
             logger.warning(f"Failed to delete bucket '{bucket_id}': {e}")
             return False
@@ -276,24 +284,63 @@ class AWClient:
         from afk_filter import parse_iso_timestamp, to_iso_timestamp
 
         window_bucket = f"aw-watcher-window_{host}"
-        web_bucket = f"aw-watcher-web_{host}"
         afk_bucket = f"aw-watcher-afk_{host}"
 
-        # 1. Ensure buckets exist
+        # 1. Ensure core buckets exist
         self.create_bucket(bucket_id=window_bucket, bucket_type="currentwindow", hostname=host)
         self.create_bucket(bucket_id=afk_bucket, bucket_type="afkstatus", hostname=host)
 
-        # 2. Separate into window events and browser web tab events
+        def detect_browser(data: Dict[str, Any]) -> Tuple[Optional[str], str]:
+            app = str(data.get("app") or "").strip()
+            src = str(data.get("source_bucket") or "").strip().lower()
+            url = str(data.get("url") or "").strip()
+            combined = f"{src} {app}".lower()
+
+            if "brave" in combined:
+                return "brave", "Brave-browser"
+            elif any(f in combined for f in ("firefox", "librewolf", "waterfox", "nightly")):
+                return "firefox", "Firefox"
+            elif "edge" in combined or "msedge" in combined:
+                return "edge", "Microsoft-edge"
+            elif "opera" in combined:
+                return "opera", "Opera"
+            elif "vivaldi" in combined:
+                return "vivaldi", "Vivaldi"
+            elif "zen" in combined:
+                return "zen", "Zen"
+            elif "floorp" in combined:
+                return "floorp", "Floorp"
+            elif "arc" in combined:
+                return "arc", "Arc"
+            elif "chrome" in combined or "chromium" in combined:
+                return "chrome", "Google-chrome"
+            elif url:
+                return "chrome", "Google-chrome"
+            else:
+                return None, app or "Unknown"
+
+        # 2. Separate into window events and browser web tab events partitioned by browser slug
         window_events = []
-        web_events = []
+        web_events_by_browser: Dict[str, List[Dict[str, Any]]] = {}
+
         for e in events:
             d = dict(e.get("data", {}))
             url_val = str(d.get("url") or "").strip()
             app_val = str(d.get("app") or "").strip()
 
-            if not app_val and url_val:
-                app_val = "Browser"
-                d["app"] = app_val
+            browser_slug, canonical_app = detect_browser(d)
+
+            # Ensure window events for web activities carry an app name recognized by ActivityWatch
+            if url_val and browser_slug:
+                if not app_val or app_val.lower() in ("browser", "unknown", "web") or browser_slug not in app_val.lower():
+                    d["app"] = canonical_app
+                elif app_val.lower() == browser_slug:
+                    d["app"] = canonical_app
+            elif not app_val:
+                d["app"] = canonical_app
+
+            if not d.get("title"):
+                d["title"] = d.get("app") or "Unknown"
 
             window_events.append({
                 "timestamp": e.get("timestamp"),
@@ -301,8 +348,10 @@ class AWClient:
                 "data": d,
             })
 
-            if url_val:
-                web_events.append({
+            if url_val and browser_slug:
+                if browser_slug not in web_events_by_browser:
+                    web_events_by_browser[browser_slug] = []
+                web_events_by_browser[browser_slug].append({
                     "timestamp": e.get("timestamp"),
                     "duration": e.get("duration", 0.0),
                     "data": {
@@ -321,17 +370,29 @@ class AWClient:
 
         self.insert_events(window_bucket, window_events)
 
-        if web_events:
+        # 3. Synchronize browser web events into browser-specific buckets
+        # (e.g. aw-watcher-web-brave_classified, aw-watcher-web-firefox_classified)
+        for b_slug, b_events in web_events_by_browser.items():
+            if not b_events:
+                continue
+            web_bucket = f"aw-watcher-web-{b_slug}_{host}"
             self.create_bucket(
                 bucket_id=web_bucket,
                 bucket_type="web.tab.current",
                 client_name="aw-watcher-web",
                 hostname=host,
             )
-            self.insert_events(web_bucket, web_events)
-            logger.info(f"Synchronized {len(web_events)} web events with URLs to '{web_bucket}'")
+            self.insert_events(web_bucket, b_events)
+            logger.info(f"Synchronized {len(b_events)} web events with URLs to '{web_bucket}'")
 
-        # 3. Insert non-AFK span covering the events so ActivityWatch marks them active
+        # 4. Clean up legacy unpartitioned bucket aw-watcher-web_{host} if present
+        legacy_web_bucket = f"aw-watcher-web_{host}"
+        try:
+            self.delete_bucket(legacy_web_bucket)
+        except Exception:
+            pass
+
+        # 5. Insert non-AFK span covering the events so ActivityWatch marks them active
         try:
             min_time = min(parse_iso_timestamp(e["timestamp"]) for e in events)
             max_time = max(

@@ -161,6 +161,11 @@ def main():
         help="Gemma 4 E2B variant: 'standard' (Q4_K_M ~3.1 GB) or 'light' (Q3_K_M ~2.5 GB)",
     )
 
+    # Download llama-server command
+    dl_server_parser = subparsers.add_parser(
+        "download-llama-server", help="Download native C++ llama-server binary directly from GitHub releases"
+    )
+
     # Sync categories command
     sync_parser = subparsers.add_parser(
         "sync-categories",
@@ -190,6 +195,13 @@ def main():
         print(f"Target directory: {MODELS_DIR}")
         path = download_gemma_weights(repo_id=repo, filename=filename)
         print(f"\nDownload complete! Model ready for local in-process inference at:\n  {path}")
+        return
+
+    if args.command == "download-llama-server":
+        from llama_server_manager import download_llama_server
+        print("Checking / downloading native llama-server binary...")
+        bin_path = download_llama_server()
+        print(f"\nllama-server ready at:\n  {bin_path}")
         return
 
     if args.command == "sync-categories":

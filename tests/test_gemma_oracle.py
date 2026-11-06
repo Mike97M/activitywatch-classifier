@@ -48,13 +48,14 @@ def test_gemma_json_parser():
     assert parsed2["subcategory"] == "Team Chat"
 
 
-def test_gemma_local_model_info_and_fallback():
+def test_gemma_local_model_info_and_fallback(monkeypatch):
     oracle = GemmaOracle(backend="local")
     info = oracle.get_local_model_info()
     assert "available" in info
     assert "size_gb" in info
 
-    # If no local model is currently downloaded, it should fall back safely without crashing
+    # If local llama.cpp returns None / fails, it should fall back safely to heuristics
+    monkeypatch.setattr(oracle, "_call_llama_cpp", lambda *args, **kwargs: None)
     res = oracle.classify_activity(app="Code", title="test.py - Visual Studio Code", url="")
     assert res["category"] == "Development"
     assert res["confidence"] >= 0.9

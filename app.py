@@ -81,6 +81,7 @@ class RunPipelineRequest(BaseModel):
     include_audible: bool = True
     afk_bucket_id: Optional[str] = None
     collect_training_data: bool = True
+    max_streams: Optional[int] = None
 
 
 class EventCorrectionRequest(BaseModel):
@@ -125,10 +126,12 @@ def get_status() -> Dict[str, Any]:
         else (last_task.to_dict() if last_task else None)
     )
 
+    from llama_server_manager import llama_server
     return {
         "activitywatch": aw_status,
         "classifier": classifier_stats,
         "gemma_oracle": oracle_status,
+        "llama_server": llama_server.get_status(),
         "confidence_threshold": pipeline.confidence_threshold,
         "last_run_stats": pipeline.last_run_stats,
         "active_task": active_dict,
@@ -204,6 +207,33 @@ def download_gemma_api(req: DownloadGemmaRequest, sync: bool = False) -> Dict[st
         "task_id": task.id,
         "task": task.to_dict(),
     }
+
+
+@app.post("/api/llama-server/download")
+def download_llama_server_endpoint() -> Dict[str, Any]:
+    """Download native llama-server C++ binary if not already present."""
+    from llama_server_manager import download_llama_server, llama_server
+    bin_path = download_llama_server()
+    return {"status": "installed", "binary_path": str(bin_path), "server_status": llama_server.get_status()}
+
+
+@app.post("/api/llama-server/start")
+def start_llama_server_endpoint() -> Dict[str, Any]:
+    """Start local llama-server process using available local model."""
+    from llama_server_manager import llama_server
+    model_path = gemma_oracle.find_local_model_path()
+    if not model_path:
+        raise HTTPException(status_code=400, detail="No local model found. Download weights first.")
+    base_url = llama_server.ensure_server(model_path)
+    return {"status": "started", "base_url": base_url, "server_status": llama_server.get_status()}
+
+
+@app.post("/api/llama-server/stop")
+def stop_llama_server_endpoint() -> Dict[str, Any]:
+    """Stop local llama-server process."""
+    from llama_server_manager import llama_server
+    llama_server.stop()
+    return {"status": "stopped", "server_status": llama_server.get_status()}
 
 
 @app.get("/api/buckets")
@@ -300,6 +330,7 @@ def run_pipeline(req: RunPipelineRequest, sync: bool = False) -> Dict[str, Any]:
                 include_audible=req.include_audible,
                 afk_bucket_id=req.afk_bucket_id,
                 collect_training_data=req.collect_training_data,
+                max_streams=req.max_streams,
             )
             return {"status": "completed", "results": stats}
         except Exception as e:
@@ -327,6 +358,7 @@ def run_pipeline(req: RunPipelineRequest, sync: bool = False) -> Dict[str, Any]:
             "include_audible": req.include_audible,
             "afk_bucket_id": req.afk_bucket_id,
             "collect_training_data": req.collect_training_data,
+            "max_streams": req.max_streams,
         },
     )
 

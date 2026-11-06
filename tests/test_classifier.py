@@ -78,3 +78,29 @@ def test_classifier_extract_features_domain_and_url():
     assert "root_domain:google.com" in feat
     assert "path:prompts" in feat
     assert "app:firefox" in feat
+
+
+def test_browser_email_classification_not_browsing():
+    clf = FastClassifier()
+    browser_emails = [
+        {"app": "Brave-browser", "title": "Inbox (5) - Gmail - Brave", "url": "https://mail.google.com/mail/u/0/#inbox"},
+        {"app": "Brave-browser", "title": "Inbox - app.mailbox.org - Brave", "url": "https://app.mailbox.org/appsuite/#app=io.ox/mail"},
+        {"app": "Brave-browser", "title": "Mail - John Doe - Outlook", "url": "https://outlook.live.com/mail/0/inbox"},
+        {"app": "Brave-browser", "title": "Proton Mail", "url": "https://mail.proton.me/u/0/inbox"},
+        {"app": "Brave-browser", "title": "Yahoo Mail", "url": "https://mail.yahoo.com/d/folders/1"},
+        {"app": "Brave-browser", "title": "Fastmail", "url": "https://app.fastmail.com/mail/Inbox"},
+        {"app": "Brave-browser", "title": "Webmail Login", "url": "https://webmail.example.com/"},
+        {"app": "Brave-browser", "title": "Inbox (3) - Gmail - Brave", "url": ""},
+        {"app": "Brave-browser", "title": "app.mailbox.org/appsuite/#app=io.ox/mail - Brave", "url": ""},
+        {"app": "Brave-browser", "title": "Proton Mail - Brave", "url": ""},
+        {"app": "Brave-browser", "title": "Mail - Outlook - Brave", "url": ""},
+        {"app": "Firefox", "title": "Gmail", "url": "https://mail.google.com/mail/mu/mp/466/"},
+        {"app": "Firefox", "title": "app.mailbox.org", "url": "https://app.mailbox.org/"},
+    ]
+
+    for ev in browser_emails:
+        feat = clf.extract_features(ev)
+        cat, subcat, full, conf, _ = clf.predict_hierarchy(feat)
+        assert cat == "Communication", f"Expected Communication for {ev}, got {cat}"
+        assert subcat == "Email", f"Expected Email for {ev}, got {subcat}"
+        assert cat != "Browsing & Research", f"Should never be Browsing & Research: {ev}"

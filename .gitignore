@@ -57,3 +57,7 @@ models/*.bin
 # Logs
 *.log
 logs/
+
+# Local llama-server binaries
+bin/
+!bin/.gitkeep
