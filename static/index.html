@@ -146,21 +146,16 @@
       <div class="aw-card p-4">
         <div class="flex items-center justify-between text-slate-500 dark:text-slate-400 mb-1">
           <span class="text-[11px] font-semibold uppercase tracking-wider font-varela">Training Dataset</span>
-          <div class="flex items-center space-x-1.5">
-            <span id="git-status-badge" class="px-1.5 py-0.5 rounded text-[9px] font-mono bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-300 dark:border-slate-700">
-              Git: Syncing...
-            </span>
-            <button id="btn-manual-git-commit" title="Commit training data to Git" class="p-1 rounded hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-500 hover:text-aw transition">
-              <i class="fa-solid fa-code-commit text-xs"></i>
-            </button>
-          </div>
+          <span class="px-1.5 py-0.5 rounded text-[9px] font-mono bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-300 dark:border-slate-700">
+            Local Private
+          </span>
         </div>
         <div class="flex items-baseline space-x-2">
           <div class="text-2xl font-bold font-varela text-aw" id="stat-training-samples">0</div>
           <span class="text-xs text-slate-400 font-mono">samples</span>
         </div>
-        <div class="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 truncate" id="git-last-commit-info">
-          PII-sanitized &bull; Auto-committed to Git
+        <div class="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 truncate">
+          PII-sanitized &bull; Stored locally in data/
         </div>
       </div>
     </div>
@@ -274,41 +269,21 @@
             </label>
           </div>
 
-          <!-- Training Data Auto-Collection & Git Sync Options -->
-          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3 rounded-lg bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800">
-            <!-- Auto-Expand Dataset -->
-            <div class="flex items-center justify-between">
-              <div class="pr-2">
-                <div class="text-xs font-bold text-slate-800 dark:text-slate-100 flex items-center">
-                  <i class="fa-solid fa-database text-aw text-[10px] mr-1.5"></i>
-                  <span>Auto-Expand Dataset</span>
-                </div>
-                <div class="text-[10px] text-slate-500 dark:text-slate-400">
-                  Save novel PII-safe samples to local dataset
-                </div>
+          <!-- Training Data Auto-Collection -->
+          <div class="flex items-center justify-between p-3 rounded-lg bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800">
+            <div class="pr-2">
+              <div class="text-xs font-bold text-slate-800 dark:text-slate-100 flex items-center">
+                <i class="fa-solid fa-database text-aw text-[10px] mr-1.5"></i>
+                <span>Auto-Expand Local Dataset</span>
               </div>
-              <label class="relative inline-flex items-center cursor-pointer flex-shrink-0">
-                <input type="checkbox" id="toggle-collect-training" checked class="sr-only peer" />
-                <div class="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-aw"></div>
-              </label>
-            </div>
-
-            <!-- Auto-Commit to Git (Off by default per user request) -->
-            <div class="flex items-center justify-between">
-              <div class="pr-2">
-                <div class="text-xs font-bold text-slate-800 dark:text-slate-100 flex items-center">
-                  <i class="fa-brands fa-git-alt text-amber-500 text-[11px] mr-1.5"></i>
-                  <span>Auto-Commit to Git</span>
-                </div>
-                <div class="text-[10px] text-slate-500 dark:text-slate-400">
-                  Auto-commit to Git (disabled by default)
-                </div>
+              <div class="text-[10px] text-slate-500 dark:text-slate-400">
+                Save novel PII-safe samples to local dataset for continuous learning
               </div>
-              <label class="relative inline-flex items-center cursor-pointer flex-shrink-0">
-                <input type="checkbox" id="toggle-auto-commit" class="sr-only peer" />
-                <div class="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-aw"></div>
-              </label>
             </div>
+            <label class="relative inline-flex items-center cursor-pointer flex-shrink-0">
+              <input type="checkbox" id="toggle-collect-training" checked class="sr-only peer" />
+              <div class="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-aw"></div>
+            </label>
           </div>
 
           <!-- Action Button -->

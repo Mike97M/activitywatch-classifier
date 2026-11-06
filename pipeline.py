@@ -53,7 +53,6 @@ class ClassificationPipeline:
         afk_bucket_id: Optional[str] = None,
         progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
         collect_training_data: bool = True,
-        auto_commit_git: bool = False,
     ) -> Dict[str, Any]:
         """Clone events from source buckets by count or time range, filter AFK intervals, and classify."""
         threshold = (
@@ -455,23 +454,6 @@ class ClassificationPipeline:
             )
             self.classifier.retrain_full()
 
-        # Git dataset commit
-        git_commit_res = None
-        git_status_res = None
-        try:
-            import git_sync
-            if (
-                auto_commit_git
-                and new_training_samples > 0
-                and Path(self.classifier.training_data_path).resolve() == Path(TRAINING_DATA_PATH).resolve()
-            ):
-                git_commit_res = git_sync.commit_training_data(
-                    message=f"data: auto-add {new_training_samples} training samples via classifier pipeline"
-                )
-            git_status_res = git_sync.get_training_data_status()
-        except Exception as e:
-            logger.warning(f"Git dataset sync failed: {e}")
-
         stats = {
             "target_bucket_id": target_bucket_id,
             "source_buckets": source_bucket_ids,
@@ -491,8 +473,6 @@ class ClassificationPipeline:
             "gemma_oracle_calls": gemma_calls,
             "confidence_threshold": threshold,
             "new_training_samples_added": new_training_samples,
-            "git_commit": git_commit_res,
-            "git_status": git_status_res,
             "category_distribution": category_distribution,
             "subcategory_distribution": subcategory_distribution,
             "recent_preview": recent_preview,

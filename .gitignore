@@ -38,12 +38,12 @@ data/*.sqlite
 data/*.db
 data/cache/
 data/*.jsonl
-data/training_data*
+!data/training_data.example.jsonl
+!data/.gitkeep
 models/*.joblib
 models/*.onnx
 models/*.gguf
 models/*.bin
-!data/.gitkeep
 !models/.gitkeep
 
 # IDE / Editor
