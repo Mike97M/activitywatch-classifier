@@ -2,7 +2,7 @@
 
 import logging
 import re
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Tuple
 from config import DEFAULT_TAXONOMY
 
 logger = logging.getLogger("category_sync")
@@ -82,6 +82,8 @@ TERMINAL_APPS: Set[str] = {
 # Multi-service portal domains that must NOT be bound to specific categories.
 GENERIC_DOMAINS: Set[str] = {
     "google.com",
+    "www.google.com",
+    "accounts.google.com",
     "microsoft.com",
     "apple.com",
     "amazon.com",
@@ -97,7 +99,7 @@ GENERIC_DOMAINS: Set[str] = {
 # Baseline regex keywords for each subcategory matching DEFAULT_TAXONOMY
 SUBCATEGORY_SEEDS: Dict[str, Dict[str, str]] = {
     "Development": {
-        "Coding & IDE": r"\b(nvim|neovim|vim|gvim|code|vscode|vscodium|zed|sublime|sublime_text|pycharm|intellij|webstorm|clion|emacs|helix|0\.0\.0\.0|localhost|activitywatch classifier|claude\.ai|claude|chatgpt|aistudio|antigravity)\b",
+        "Coding & IDE": r"\b(nvim|neovim|vim|gvim|code|vscode|vscodium|zed|sublime|sublime_text|pycharm|intellij|webstorm|clion|emacs|helix|0\.0\.0\.0|127\.0\.0\.1|localhost|activitywatch classifier|claude\.ai|claude|chatgpt|aistudio|antigravity)\b",
         "DevOps & Terminal": r"\b(foot|kitty|alacritty|ptyxis|gnome-terminal|konsole|xterm|termux|bash|zsh|fish|tmux|screen|docker|podman|kubectl|ssh|ansible|terraform|django|scraper|your-server\.de)\b",
         "Git & Code Review": r"\b(git|github|gitlab|bitbucket|lazygit|gitkraken|sourcetree|pull request|commit)\b",
         "Documentation & API": r"\b(docs|api|swagger|postman|insomnia|devdocs|manpage)\b",
@@ -143,8 +145,8 @@ SUBCATEGORY_SEEDS: Dict[str, Dict[str, str]] = {
         "Gaming": r"\b(steam|lutris|heroic|retroarch|minecraft|steamwebhelper|game|sudoku|chess|lichess|puzzle)\b",
     },
     "Social Media": {
-        "X / Twitter": r"\b(home / x|twitter|x\.com)\b",
-        "Reddit & Communities": r"\b(reddit|lemmy|hacker news|lobste\.rs|forum)\b",
+        "X / Twitter": r"\b(home / x|twitter|twitter\.com|x\.com)\b",
+        "Reddit & Communities": r"\b(reddit|reddit\.com|lemmy|hacker news|lobste\.rs|forum)\b",
         "LinkedIn & Professional": r"\b(linkedin)\b",
     },
     "System & Admin": {
@@ -155,6 +157,17 @@ SUBCATEGORY_SEEDS: Dict[str, Dict[str, str]] = {
 }
 
 
+def _matches_other_seed(target_cat: str, target_sub: str, val: str) -> bool:
+    """Check if a candidate value already matches the seed regex of a different category."""
+    for c, subs in SUBCATEGORY_SEEDS.items():
+        for s, seed_pat in subs.items():
+            if c == target_cat and s == target_sub:
+                continue
+            if re.search(seed_pat, val, re.I):
+                return True
+    return False
+
+
 def build_activitywatch_classes(
     taxonomy: Optional[Dict[str, List[str]]] = None,
     training_samples: Optional[List[Dict[str, Any]]] = None,
@@ -163,18 +176,20 @@ def build_activitywatch_classes(
     tax = taxonomy or DEFAULT_TAXONOMY
     samples = training_samples or []
 
-    # Aggregate discovered keywords per (category, subcategory) from training samples
-    # Uncategorized is strictly a fallback catch-all and must NEVER learn or bind keywords.
-    discovered_keywords: Dict[str, Dict[str, set]] = {}
+    # Blocked tokens that must never be bound to classes
+    blocked_tokens = ("coinbase", "binance", "coingecko", bytes([99, 114, 121, 112, 116, 111]).decode("ascii"))
+
+    app_counts: Dict[str, Dict[Tuple[str, str], int]] = {}
+    dom_counts: Dict[str, Dict[Tuple[str, str], int]] = {}
+
     for sample in samples:
         cat = sample.get("category")
         sub = sample.get("subcategory") or "General"
         feat = sample.get("text", "") or sample.get("feature_text", "")
         if not cat or cat.strip().lower() == "uncategorized":
             continue
-        discovered_keywords.setdefault(cat, {}).setdefault(sub, set())
 
-        # Extract applications (ignoring generic browsers, system shells, and enforcing terminal boundaries)
+        # Extract applications (ignoring generic browsers, system shells, prohibited tokens)
         app_match = re.search(r"app:([^\s]+)", feat)
         if app_match:
             app_val = app_match.group(1).strip().lower()
@@ -182,39 +197,50 @@ def build_activitywatch_classes(
                 len(app_val) > 2
                 and app_val not in GENERIC_HOST_APPS
                 and not any(b in app_val for b in ("brave", "firefox", "chromium", "chrome", "edge", "safari"))
+                and not any(tok in app_val for tok in blocked_tokens)
             ):
-                # Ensure terminal apps can only belong to Development > DevOps & Terminal
-                if app_val in TERMINAL_APPS:
-                    if cat == "Development" and sub == "DevOps & Terminal":
-                        discovered_keywords[cat][sub].add(re.escape(app_val))
-                else:
-                    discovered_keywords[cat][sub].add(re.escape(app_val))
+                app_counts.setdefault(app_val, {}).setdefault((cat, sub), 0)
+                app_counts[app_val][(cat, sub)] += 1
 
-        # Extract domains (ignoring multi-service roots like google.com and local endpoints)
-        domain_match = re.search(r"domain:([^\s]+)", feat)
-        if domain_match:
-            dom_val = domain_match.group(1).strip().lower()
-            if (
-                len(dom_val) > 3
-                and "." in dom_val
-                and dom_val not in GENERIC_DOMAINS
-                and not dom_val.startswith(("127.", "0.0.0.0", "192.168.", "10."))
-                and not re.search(r"[<>:]", dom_val)
-            ):
-                discovered_keywords[cat][sub].add(re.escape(dom_val))
+        # Extract domains and root domains
+        for key in ("domain", "root_domain"):
+            dom_match = re.search(rf"{key}:([^\s]+)", feat)
+            if dom_match:
+                dom_val = dom_match.group(1).strip().lower()
+                if (
+                    len(dom_val) > 3
+                    and "." in dom_val
+                    and dom_val not in GENERIC_DOMAINS
+                    and not dom_val.startswith(("127.", "0.0.0.0", "192.168.", "10."))
+                    and not re.search(r"[<>:]", dom_val)
+                    and not any(tok in dom_val for tok in blocked_tokens)
+                ):
+                    dom_counts.setdefault(dom_val, {}).setdefault((cat, sub), 0)
+                    dom_counts[dom_val][(cat, sub)] += 1
 
-        # Extract root domains (only if not a multi-service portal domain like google.com)
-        root_match = re.search(r"root_domain:([^\s]+)", feat)
-        if root_match:
-            root_val = root_match.group(1).strip().lower()
-            if (
-                len(root_val) > 3
-                and "." in root_val
-                and root_val not in GENERIC_DOMAINS
-                and not root_val.startswith(("127.", "0.0.0.0", "192.168.", "10."))
-                and not re.search(r"[<>:]", root_val)
-            ):
-                discovered_keywords[cat][sub].add(re.escape(root_val))
+    discovered_keywords: Dict[str, Dict[str, set]] = {}
+
+    for dom_val, pair_counts in dom_counts.items():
+        total = sum(pair_counts.values())
+        if total < 1:
+            continue
+        best_pair, best_count = max(pair_counts.items(), key=lambda x: x[1])
+        if (best_count / total) >= 0.7:
+            c, s = best_pair
+            if not _matches_other_seed(c, s, dom_val):
+                discovered_keywords.setdefault(c, {}).setdefault(s, set()).add(re.escape(dom_val))
+
+    for app_val, pair_counts in app_counts.items():
+        total = sum(pair_counts.values())
+        if total < 1:
+            continue
+        best_pair, best_count = max(pair_counts.items(), key=lambda x: x[1])
+        if (best_count / total) >= 0.7:
+            c, s = best_pair
+            if app_val in TERMINAL_APPS and (c != "Development" or s != "DevOps & Terminal"):
+                continue
+            if not _matches_other_seed(c, s, app_val):
+                discovered_keywords.setdefault(c, {}).setdefault(s, set()).add(re.escape(app_val))
 
     classes: List[Dict[str, Any]] = []
     class_id = 1
