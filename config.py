@@ -43,6 +43,25 @@ DEFAULT_TAXONOMY: Dict[str, List[str]] = {
         "Email",
         "Calls & Meetings",
     ],
+    "Education & Learning": [
+        "Language Learning",
+        "Courses & Tutorials",
+        "Reading & Reference",
+    ],
+    "Finance & Banking": [
+        "Banking & Payments",
+        "Investments & Trading",
+    ],
+    "Travel & Navigation": [
+        "Public Transit & Tickets",
+        "Maps & Rides",
+        "Car & EV Utilities",
+        "Lodging & Trips",
+    ],
+    "Health & Fitness": [
+        "Workouts & Gym",
+        "Health Trackers",
+    ],
     "Browsing & Research": [
         "Search & Exploration",
         "Technical Articles & Papers",

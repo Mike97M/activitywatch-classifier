@@ -24,6 +24,7 @@ from config import (
     flatten_taxonomy,
     split_category_path,
 )
+from app_knowledge import app_knowledge
 
 logger = logging.getLogger("gemma_oracle")
 
@@ -463,7 +464,7 @@ class GemmaOracle:
             f"   - Blank new browser tabs ('New Tab', 'chrome://newtab', 'about:blank') belong to 'Uncategorized > General Activity'.\n"
             f"   - ONLY actual web search engines (Google Search, DuckDuckGo, Brave Search) or exploratory general browsing belong to 'Browsing & Research > Search & Exploration'.\n\n"
             f"Activity Details:\n"
-            f"- Application: {app or 'browser'}\n"
+            f"- Application: {app or 'browser'}{f' ({app_knowledge.get_description(app)})' if app and app_knowledge.get_description(app) else ''}\n"
             f"- Window / Tab Title: {title or 'unknown'}\n"
             f"- Website Domain: {parsed_domain or 'none'}\n"
             f"- URL / Link: {url or 'none'}\n\n"
@@ -790,6 +791,20 @@ class GemmaOracle:
                 if target_sub.lower() in s.lower() or s.lower() in target_sub.lower():
                     return s
             return subs[0] if subs else "General"
+
+        # -1. Recognized mobile and desktop apps from app knowledge base
+        hint = app_knowledge.get_category_hint(app_clean)
+        if hint:
+            cat, sub = hint
+            picked_sub = pick_sub(cat, sub)
+            return {
+                "category": cat,
+                "subcategory": picked_sub,
+                "full_category": f"{cat} > {picked_sub}",
+                "confidence": 0.98,
+                "reasoning": f"Identified application '{app_clean}' from application knowledge base",
+                "backend": "gemma_heuristic_proxy",
+            }
 
         # -1. Blank or New Browser Tab
         if (

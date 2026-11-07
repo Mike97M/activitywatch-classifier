@@ -87,3 +87,37 @@ def test_generic_browsers_and_domains_not_polluting_categories():
     assert "(google\\.com)" not in email_regex
     assert "|google\\.com|" not in f"|{email_regex}|"
     assert "org.chromium.chromium" not in email_regex
+
+
+def test_education_category_and_duolingo():
+    classes = build_activitywatch_classes()
+    edu_class = next((c for c in classes if c["name"] == ["Education & Learning", "Language Learning"]), None)
+    assert edu_class is not None
+    assert "duolingo" in edu_class["rule"]["regex"]
+
+    # Verify Duolingo is NOT in gaming
+    gaming_class = next(c for c in classes if c["name"] == ["Media & Entertainment", "Gaming"])
+    assert "duolingo" not in gaming_class["rule"]["regex"]
+
+
+def test_browser_parent_level_precedence():
+    classes = build_activitywatch_classes()
+    # Plain browser pattern must be on the root ["Browsing & Research"] class (depth 1)
+    # and NOT inside specific child URL categories like ["Browsing & Research", "Search & Exploration"]
+    root_browsing = next(c for c in classes if c["name"] == ["Browsing & Research"])
+    assert "firefox" in root_browsing["rule"]["regex"]
+    assert "chrome" in root_browsing["rule"]["regex"]
+
+    # Subcategory classes (depth 2) have specific rules that take precedence in ActivityWatch
+    sub_search = next(c for c in classes if c["name"] == ["Browsing & Research", "Search & Exploration"])
+    assert "firefox" not in sub_search["rule"]["regex"]
+
+
+def test_finance_taxonomy_structure():
+    from config import DEFAULT_TAXONOMY, flatten_taxonomy
+    paths = flatten_taxonomy(DEFAULT_TAXONOMY)
+    finance_paths = [p for p in paths if p.startswith("Finance & Banking")]
+    assert "Finance & Banking > Banking & Payments" in finance_paths
+    assert "Finance & Banking > Investments & Trading" in finance_paths
+
+
