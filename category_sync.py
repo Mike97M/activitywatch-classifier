@@ -93,30 +93,30 @@ GENERIC_DOMAINS: Set[str] = {
 # Baseline regex keywords for each subcategory matching DEFAULT_TAXONOMY
 SUBCATEGORY_SEEDS: Dict[str, Dict[str, str]] = {
     "Development": {
-        "Coding & IDE": r"\b(nvim|neovim|vim|gvim|code|vscode|vscodium|zed|sublime|sublime_text|pycharm|intellij|webstorm|clion|emacs|helix|0\.0\.0\.0|localhost|activitywatch classifier|claude\.ai|chatgpt|aistudio)\b",
-        "DevOps & Terminal": r"\b(foot|kitty|alacritty|ptyxis|gnome-terminal|konsole|xterm|bash|zsh|fish|tmux|screen|docker|podman|kubectl|ssh|ansible|terraform|django|scraper|your-server\.de)\b",
+        "Coding & IDE": r"\b(nvim|neovim|vim|gvim|code|vscode|vscodium|zed|sublime|sublime_text|pycharm|intellij|webstorm|clion|emacs|helix|0\.0\.0\.0|localhost|activitywatch classifier|claude\.ai|claude|chatgpt|aistudio|antigravity)\b",
+        "DevOps & Terminal": r"\b(foot|kitty|alacritty|ptyxis|gnome-terminal|konsole|xterm|termux|bash|zsh|fish|tmux|screen|docker|podman|kubectl|ssh|ansible|terraform|django|scraper|your-server\.de)\b",
         "Git & Code Review": r"\b(git|github|gitlab|bitbucket|lazygit|gitkraken|sourcetree|pull request|commit)\b",
         "Documentation & API": r"\b(docs|api|swagger|postman|insomnia|devdocs|manpage)\b",
         "Debugging & Testing": r"\b(gdb|valgrind|cargo test|pytest|unittest|profiler|debugger|inspect)\b",
     },
     "Communication": {
-        "Team Chat": r"\b(slack|discord|element|mattermost|zulip|teams|microsoft teams)\b",
-        "Email": r"\b(thunderbird|evolution|gmail|proton|protonmail|kmail|mutt|neomutt|alpine|outlook|mailbox\.org|app\.mailbox\.org|fastmail|webmail|roundcube|tutanota|yahoo mail|mail)\b",
+        "Team Chat": r"\b(slack|discord|element|mattermost|zulip|teams|microsoft teams|telegram|org\.telegram\.desktop|whatsapp|signal|org\.signal\.signal)\b",
+        "Email": r"\b(thunderbird|evolution|org\.gnome\.evolution|gmail|proton|protonmail|kmail|mutt|neomutt|alpine|outlook|mailbox\.org|app\.mailbox\.org|fastmail|webmail|roundcube|tutanota|yahoo mail|mail|fairemail)\b",
         "Calls & Meetings": r"\b(zoom|meet|google meet|webex|jitsi|bluejeans|call|huddle)\b",
     },
     "Browsing & Research": {
         "Search & Exploration": r"\b(google search|duckduckgo|bing search|brave search|kagi|searx|wikipedia|search)\b",
         "Technical Articles & Papers": r"\b(stackoverflow|stackexchange|github\.com|gitlab\.com|readthedocs|developer\.mozilla|python\.org|pkg\.go\.dev|crates\.io|huggingface|arxiv|artificialanalysis|coingecko)\b",
-        "Shopping & E-Commerce": r"\b(amazon|ebay|aliexpress|shopify|cart|checkout)\b",
+        "Shopping & E-Commerce": r"\b(amazon|ebay|aliexpress|shopify|cart|checkout|vipps|revolut|wise|bankid|mobilbank|ibkr|ingbusiness)\b",
     },
     "Productivity & Planning": {
         "Notes & Knowledge Base": r"\b(obsidian|notion|confluence|evernote|logseq|joplin|onenote|wiki|duolingo)\b",
         "Task & Project Management": r"\b(jira|trello|asana|linear|todoist|ticktick|omnifocus|kanban)\b",
-        "Docs & Spreadsheets": r"\b(libreoffice|google docs|google sheets|calibre|evince|okular|excel|word|calc)\b",
+        "Docs & Spreadsheets": r"\b(libreoffice|google docs|google sheets|calibre|evince|okular|excel|word|calc|drive)\b",
     },
     "Media & Entertainment": {
         "Video & Streaming": r"\b(youtube|twitch|netflix|plex|jellyfin|vlc|mpv|kodi|prime video|disney\+|bilibili)\b",
-        "Music & Audio": r"\b(spotify|youtube music|soundcloud|tidal|deezer|rhythmbox|audacious|podcast)\b",
+        "Music & Audio": r"\b(spotify|youtube music|soundcloud|tidal|deezer|rhythmbox|audacious|podcast|simpmusic)\b",
         "Gaming": r"\b(steam|lutris|heroic|retroarch|minecraft|steamwebhelper|game|sudoku|chess|puzzle)\b",
     },
     "Social Media": {
@@ -125,12 +125,9 @@ SUBCATEGORY_SEEDS: Dict[str, Dict[str, str]] = {
         "LinkedIn & Professional": r"\b(linkedin)\b",
     },
     "System & Admin": {
-        "OS & Desktop Settings": r"\b(gnome-control-center|systemsettings|pavucontrol|gparted|settings|control center|launcher|system launcher|clock|wellbeing|shelter)\b",
-        "Hardware & System Monitor": r"\b(htop|btop|top|system-monitor|sensors|nvtop|activitywatch|127\.0\.0\.1:5600)\b",
-        "Package Management": r"\b(nautilus|dolphin|thunar|mediawriter|dnf|rpm|zypper|apt|pacman|flatpak)\b",
-    },
-    "Uncategorized": {
-        "General Activity": r"",
+        "OS & Desktop Settings": r"\b(gnome-control-center|systemsettings|pavucontrol|gparted|settings|control center|launcher|system launcher|clock|wellbeing|shelter|bitwarden|tailscale|remmina|org\.remmina\.remmina)\b",
+        "Hardware & System Monitor": r"\b(htop|btop|top|system-monitor|sensors|nvtop|activitywatch|127\.0\.0\.1:5600|powerstats|org\.gnome\.powerstats)\b",
+        "Package Management": r"\b(nautilus|org\.gnome\.nautilus|dolphin|thunar|mediawriter|org\.fedoraproject\.mediawriter|gnome-disks|boxes|org\.gnome\.boxes|flatseal|dnf|rpm|zypper|apt|pacman|flatpak)\b",
     },
 }
 
@@ -144,12 +141,13 @@ def build_activitywatch_classes(
     samples = training_samples or []
 
     # Aggregate discovered keywords per (category, subcategory) from training samples
+    # Uncategorized is strictly a fallback catch-all and must NEVER learn or bind keywords.
     discovered_keywords: Dict[str, Dict[str, set]] = {}
     for sample in samples:
         cat = sample.get("category")
         sub = sample.get("subcategory") or "General"
         feat = sample.get("text", "") or sample.get("feature_text", "")
-        if not cat:
+        if not cat or cat.strip().lower() == "uncategorized":
             continue
         discovered_keywords.setdefault(cat, {}).setdefault(sub, set())
 
@@ -199,6 +197,9 @@ def build_activitywatch_classes(
     class_id = 1
 
     for cat, subcategories in tax.items():
+        # Uncategorized is added at the end as the zero-rule catch-all class
+        if cat.strip().lower() == "uncategorized":
+            continue
         color = CATEGORY_COLORS.get(cat, "#4DBA87")
         cat_regex_parts = []
 
