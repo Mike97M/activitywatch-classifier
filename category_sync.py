@@ -79,6 +79,39 @@ TERMINAL_APPS: Set[str] = {
     "terminator",
 }
 
+# Overly generic English words that must NEVER be extracted as standalone regex keywords
+# to avoid falsely intercepting browser tab titles or arbitrary document windows.
+OVERBROAD_KEYWORDS: Set[str] = {
+    "system",
+    "settings",
+    "manage",
+    "phone",
+    "digital",
+    "global",
+    "permission",
+    "intentresolver",
+    "clock",
+    "contacts",
+    "files",
+    "content",
+    "photos",
+    "chat",
+    "mail",
+    "app",
+    "view",
+    "search",
+    "explore",
+    "android",
+    "device",
+    "home",
+    "general",
+    "window",
+    "new tab",
+    "oneplus",
+    "launcher",
+    "wellbeing",
+}
+
 # Multi-service portal domains that must NOT be bound to specific categories.
 GENERIC_DOMAINS: Set[str] = {
     "google.com",
@@ -145,12 +178,12 @@ SUBCATEGORY_SEEDS: Dict[str, Dict[str, str]] = {
         "Gaming": r"\b(steam|lutris|heroic|retroarch|minecraft|steamwebhelper|game|sudoku|chess|lichess|puzzle)\b",
     },
     "Social Media": {
-        "X / Twitter": r"\b(home / x|twitter|twitter\.com|x\.com)\b",
-        "Reddit & Communities": r"\b(reddit|reddit\.com|lemmy|hacker news|lobste\.rs|forum)\b",
+        "X / Twitter": r"\b(home / x|twitter|twitter\.com|x\.com)\b|\bon X:|\/ X\b",
+        "Reddit & Communities": r"\b(reddit|reddit\.com|lemmy|hacker news|lobste\.rs|forum)\b|:\s*r\/[a-zA-Z0-9_]+|\br\/[a-zA-Z0-9_]+\b",
         "LinkedIn & Professional": r"\b(linkedin)\b",
     },
     "System & Admin": {
-        "OS & Desktop Settings": r"\b(gnome-control-center|systemsettings|pavucontrol|gparted|settings|control center|launcher|system launcher|clock|wellbeing|shelter|bitwarden|tailscale|remmina|org\.remmina\.remmina|syncthing-fork|kde connect)\b",
+        "OS & Desktop Settings": r"\b(gnome-control-center|systemsettings|systemsettings5|pavucontrol|gparted|control center|system launcher|digital wellbeing|shelter|bitwarden|tailscale|remmina|org\.remmina\.remmina|syncthing-fork|kde connect|com\.android\.settings|org\.gnome\.settings|org\.gnome\.extensions)\b",
         "Hardware & System Monitor": r"\b(htop|btop|top|system-monitor|sensors|nvtop|activitywatch|127\.0\.0\.1:5600|powerstats|org\.gnome\.powerstats)\b",
         "Package Management": r"\b(nautilus|org\.gnome\.nautilus|dolphin|thunar|mediawriter|org\.fedoraproject\.mediawriter|gnome-disks|boxes|org\.gnome\.boxes|flatseal|dnf|rpm|zypper|apt|pacman|flatpak)\b",
     },
@@ -189,13 +222,14 @@ def build_activitywatch_classes(
         if not cat or cat.strip().lower() == "uncategorized":
             continue
 
-        # Extract applications (ignoring generic browsers, system shells, prohibited tokens)
-        app_match = re.search(r"app:([^\s]+)", feat)
+        # Extract applications (ignoring generic browsers, system shells, overbroad terms, blocked tokens)
+        app_match = re.search(r"app:(.*?)(?:\s+(?:package|domain|root_domain|path|title|url):|$)", feat)
         if app_match:
-            app_val = app_match.group(1).strip().lower()
+            app_val = re.sub(r"\s+", " ", app_match.group(1)).strip().lower()
             if (
                 len(app_val) > 2
                 and app_val not in GENERIC_HOST_APPS
+                and app_val not in OVERBROAD_KEYWORDS
                 and not any(b in app_val for b in ("brave", "firefox", "chromium", "chrome", "edge", "safari"))
                 and not any(tok in app_val for tok in blocked_tokens)
             ):
@@ -211,6 +245,7 @@ def build_activitywatch_classes(
                     len(dom_val) > 3
                     and "." in dom_val
                     and dom_val not in GENERIC_DOMAINS
+                    and dom_val not in OVERBROAD_KEYWORDS
                     and not dom_val.startswith(("127.", "0.0.0.0", "192.168.", "10."))
                     and not re.search(r"[<>:]", dom_val)
                     and not any(tok in dom_val for tok in blocked_tokens)

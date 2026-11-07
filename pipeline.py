@@ -214,6 +214,47 @@ class ClassificationPipeline:
                 else:
                     logger.info(f"No matching AFK bucket found for {source_id}. Proceeding with raw events.")
 
+            # Browser URL Enrichment: If source bucket is a window watcher, find corresponding
+            # web buckets for the same device/hostname and associate active URLs with browser window events.
+            web_buckets = self.aw_client.find_web_buckets_for_source(source_id)
+            all_source_web_events = []
+            for wb in web_buckets:
+                if wb not in web_events_cache:
+                    try:
+                        web_events_cache[wb] = self.aw_client.get_events(wb, start=start_iso, end=end_iso, limit=0)
+                    except Exception as e:
+                        logger.warning(f"Could not fetch web events from {wb}: {e}")
+                        web_events_cache[wb] = []
+                all_source_web_events.extend(web_events_cache[wb])
+
+            if all_source_web_events and events:
+                parsed_web = []
+                for wb_ev in all_source_web_events:
+                    url_v = wb_ev.get("data", {}).get("url")
+                    if url_v:
+                        try:
+                            wb_st = parse_iso_timestamp(wb_ev["timestamp"])
+                            wb_et = wb_st + timedelta(seconds=float(wb_ev.get("duration", 0.0)))
+                            parsed_web.append((wb_st, wb_et, wb_ev))
+                        except Exception:
+                            pass
+
+                if parsed_web:
+                    for ev in events:
+                        ev_data = ev.get("data", {})
+                        if not ev_data.get("url"):
+                            ev_app = str(ev_data.get("app") or "").lower()
+                            if any(b in ev_app for b in ("brave", "firefox", "chromium", "chrome", "edge", "opera", "vivaldi", "zen", "browser")):
+                                try:
+                                    ev_st = parse_iso_timestamp(ev["timestamp"])
+                                    ev_et = ev_st + timedelta(seconds=float(ev.get("duration", 0.0)))
+                                    for wb_st, wb_et, wb_ev in parsed_web:
+                                        if max(ev_st, wb_st) < min(ev_et, wb_et) or abs((ev_st - wb_st).total_seconds()) < 2.0:
+                                            ev_data["url"] = wb_ev["data"]["url"]
+                                            break
+                                except Exception:
+                                    pass
+
             for event in events:
                 all_events_to_classify.append((source_id, event))
 

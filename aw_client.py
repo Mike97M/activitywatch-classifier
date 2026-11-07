@@ -281,6 +281,7 @@ class AWClient:
             return True
 
         from datetime import timedelta
+        from urllib.parse import urlparse
         from afk_filter import parse_iso_timestamp, to_iso_timestamp
 
         window_bucket = f"aw-watcher-window_{host}"
@@ -339,8 +340,21 @@ class AWClient:
             elif not app_val:
                 d["app"] = canonical_app
 
+            orig_title = d.get("title") or d.get("app") or "Unknown"
             if not d.get("title"):
-                d["title"] = d.get("app") or "Unknown"
+                d["title"] = orig_title
+
+            # Bridge ActivityWatch's native architecture limitation: ActivityWatch native Category Tree
+            # only categorizes window titles from aw-watcher-window. When a browser event carries a URL,
+            # append the domain tag so native regex rules matching domains/URLs match directly.
+            if url_val and browser_slug:
+                try:
+                    test_url = url_val if "://" in url_val else f"https://{url_val}"
+                    parsed_netloc = urlparse(test_url).netloc.split(":")[0].lower()
+                    if parsed_netloc and parsed_netloc not in d["title"].lower():
+                        d["title"] = f"{d['title']} [{parsed_netloc}]"
+                except Exception:
+                    pass
 
             window_events.append({
                 "timestamp": e.get("timestamp"),
@@ -355,7 +369,7 @@ class AWClient:
                     "timestamp": e.get("timestamp"),
                     "duration": e.get("duration", 0.0),
                     "data": {
-                        "title": d.get("title") or url_val,
+                        "title": orig_title or url_val,
                         "url": url_val,
                         "audible": d.get("audible", False),
                         "incognito": d.get("incognito", False),
