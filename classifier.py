@@ -93,6 +93,7 @@ class FastClassifier:
 
         self.is_trained = False
         self.training_samples: List[Dict[str, str]] = []
+        self.samples_by_text: Dict[str, Dict[str, Any]] = {}
         self._unretrained_count: int = 0
 
         # Load existing state if available
@@ -159,6 +160,7 @@ class FastClassifier:
 
                     samples_by_text[clean_text] = sample_dict
 
+                self.samples_by_text = samples_by_text
                 self.training_samples = list(samples_by_text.values())
                 logger.info(f"Loaded {len(self.training_samples)} sanitized training examples.")
 
@@ -217,6 +219,13 @@ class FastClassifier:
         Aggregates granular subcategory probabilities to calculate a true hierarchical parent
         confidence score, preventing confidence dilution across 30+ granular classes.
         """
+        clean_text = anonymizer.sanitize_text(feature_text)
+        if clean_text in self.samples_by_text:
+            cached = self.samples_by_text[clean_text]
+            cat = cached["category"]
+            full_cat = cached["full_category"]
+            return (full_cat, 1.0, {full_cat: 1.0, f"category:{cat}": 1.0})
+
         if not self.is_trained:
             return ("Uncategorized > General", 0.0, {})
 
@@ -262,6 +271,16 @@ class FastClassifier:
         """Predict category, subcategory, full_category, and calibrated category confidence score."""
         if is_email_feature_text(feature_text):
             return ("Communication", "Email", "Communication > Email", 0.98, {"Communication > Email": 0.98})
+
+        # Exact memory cache lookup: if previously categorized, return immediately with 1.0 confidence
+        clean_text = anonymizer.sanitize_text(feature_text)
+        if clean_text in self.samples_by_text:
+            cached = self.samples_by_text[clean_text]
+            cat = cached["category"]
+            sub = cached["subcategory"]
+            full_cat = cached["full_category"]
+            return (cat, sub, full_cat, 1.0, {full_cat: 1.0, f"category:{cat}": 1.0})
+
         full_cat, conf, probs = self.predict(feature_text)
         cat, subcat = split_category_path(full_cat)
         return (cat, subcat, full_cat, conf, probs)
@@ -295,15 +314,9 @@ class FastClassifier:
             sub = "General"
             full_cat = f"{cat} > {sub}"
 
-        # Deduplicate: check if this text already exists
-        existing_idx = None
-        for i, s in enumerate(self.training_samples):
-            if s.get("text") == clean_text:
-                existing_idx = i
-                break
-
-        if existing_idx is not None:
-            existing = self.training_samples[existing_idx]
+        # Deduplicate: check if this text already exists in memory cache (O(1) lookup)
+        if clean_text in self.samples_by_text:
+            existing = self.samples_by_text[clean_text]
             if existing.get("full_category") == full_cat:
                 return False
 
@@ -327,6 +340,7 @@ class FastClassifier:
                 "full_category": full_cat,
                 "source": source,
             }
+            self.samples_by_text[clean_text] = sample
             self.training_samples.append(sample)
 
             try:
@@ -403,6 +417,7 @@ class FastClassifier:
         return {
             "is_trained": self.is_trained,
             "total_training_samples": len(self.training_samples),
+            "cached_samples_count": len(self.samples_by_text),
             "classes_trained": list(self.model.classes_) if self.is_trained else [],
             "category_distribution": category_counts,
             "subcategory_distribution": subcategory_counts,

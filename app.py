@@ -82,6 +82,7 @@ class RunPipelineRequest(BaseModel):
     afk_bucket_id: Optional[str] = None
     collect_training_data: bool = True
     max_streams: Optional[int] = None
+    force_reclassify: bool = False
 
 
 class EventCorrectionRequest(BaseModel):
@@ -331,6 +332,7 @@ def run_pipeline(req: RunPipelineRequest, sync: bool = False) -> Dict[str, Any]:
                 afk_bucket_id=req.afk_bucket_id,
                 collect_training_data=req.collect_training_data,
                 max_streams=req.max_streams,
+                force_reclassify=req.force_reclassify,
             )
             return {"status": "completed", "results": stats}
         except Exception as e:
@@ -359,6 +361,7 @@ def run_pipeline(req: RunPipelineRequest, sync: bool = False) -> Dict[str, Any]:
             "afk_bucket_id": req.afk_bucket_id,
             "collect_training_data": req.collect_training_data,
             "max_streams": req.max_streams,
+            "force_reclassify": req.force_reclassify,
         },
     )
 

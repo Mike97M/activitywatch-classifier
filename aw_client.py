@@ -1,7 +1,7 @@
 """ActivityWatch Client with endpoint auto-detection and non-destructive operations."""
 
 import logging
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 import httpx
 
 from config import (
@@ -218,6 +218,20 @@ class AWClient:
 
         resp = self._request("GET", f"/api/0/buckets/{bucket_id}/events", params=params)
         return resp.json()
+
+    def get_existing_target_timestamps(
+        self,
+        bucket_id: str,
+        start: Optional[str] = None,
+        end: Optional[str] = None,
+    ) -> Set[str]:
+        """Fetch timestamps of events already present in target bucket for non-destructive deduplication."""
+        try:
+            events = self.get_events(bucket_id, limit=0, start=start, end=end)
+            return {str(ev["timestamp"]) for ev in events if ev.get("timestamp")}
+        except Exception as e:
+            logger.debug(f"Could not fetch existing timestamps for '{bucket_id}': {e}")
+            return set()
 
     def insert_events(self, bucket_id: str, events: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Insert events into the designated target bucket."""

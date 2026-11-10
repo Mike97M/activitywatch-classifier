@@ -174,6 +174,14 @@ def test_resolve_time_range():
     assert s_today == "2026-11-06T00:00:00Z"
     assert e_today == "2026-11-06T15:30:00Z"
 
+    # Today with local timezone (e.g. UTC+2): local midnight aligns with user's day
+    from datetime import timedelta
+    tz_plus2 = timezone(timedelta(hours=2))
+    ref_time_tz2 = datetime(2026, 11, 6, 15, 30, 0, tzinfo=tz_plus2)
+    s_tz2, e_tz2 = resolve_time_range("today", now=ref_time_tz2)
+    assert s_tz2 == "2026-11-05T22:00:00Z"
+    assert e_tz2 == "2026-11-06T13:30:00Z"
+
     # 24h / last_day
     s_24h, e_24h = resolve_time_range("24h", now=ref_time)
     assert s_24h == "2026-11-05T15:30:00Z"

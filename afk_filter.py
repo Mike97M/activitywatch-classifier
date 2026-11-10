@@ -63,16 +63,18 @@ def resolve_time_range(
     """Convert time range specification into ActivityWatch ISO start and end timestamps.
 
     Supported time_range values:
-    - 'today': From midnight today (UTC) to now
+    - 'today': From midnight of current day (local timezone, converted to UTC) to now
     - 'last_day' / '24h' / 'day': Past 24 hours
     - 'last_week' / '7d' / 'week': Past 7 days
     - 'last_month' / '30d' / 'month': Past 30 days
     - 'all': None (unbounded)
     - Custom start_time / end_time: Parsed and formatted to ISO strings
     """
-    curr = now or datetime.now(timezone.utc)
-    if curr.tzinfo is None:
-        curr = curr.replace(tzinfo=timezone.utc)
+    if now is not None:
+        curr = now if now.tzinfo is not None else now.replace(tzinfo=timezone.utc)
+    else:
+        # Default to local system timezone so "today" aligns with local calendar day
+        curr = datetime.now().astimezone()
 
     # 1. Explicit start / end override
     if start_time or end_time:

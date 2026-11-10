@@ -142,3 +142,33 @@ def test_classifier_batch_retraining_trigger():
         )
         assert clf._unretrained_count == 0
         assert clf.get_stats()["total_training_samples"] == 12
+
+
+def test_classifier_exact_memory_cache():
+    """Verify that previously categorized activities are retrieved from memory cache with 1.0 confidence."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model_path = Path(tmpdir) / "model.joblib"
+        data_path = Path(tmpdir) / "data.jsonl"
+        clf = FastClassifier(
+            model_path=model_path,
+            training_data_path=data_path,
+        )
+
+        test_feat = "app:code domain:github.com title:refactor/auth.py"
+        clf.add_training_sample(
+            feature_text=test_feat,
+            category="Development",
+            subcategory="Coding & IDE",
+            retrain_now=False,
+        )
+
+        assert test_feat in clf.samples_by_text
+        assert clf.get_stats()["cached_samples_count"] == 1
+
+        # Predict hierarchy directly: even if untrained on disk, memory cache returns 1.0 confidence
+        cat, subcat, full, conf, probs = clf.predict_hierarchy(test_feat)
+        assert cat == "Development"
+        assert subcat == "Coding & IDE"
+        assert full == "Development > Coding & IDE"
+        assert conf == 1.0
+        assert probs[full] == 1.0

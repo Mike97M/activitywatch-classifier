@@ -362,4 +362,47 @@ def test_pipeline_skips_zero_duration_events():
         assert cat_dist.get("Browsing & Research", 0) == 0
 
 
+def test_pipeline_target_deduplication_and_force_reclassify():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model_path = Path(tmpdir) / "model.joblib"
+        data_path = Path(tmpdir) / "data.jsonl"
+
+        mock_aw = MagicMock()
+        mock_aw.find_afk_bucket_for_source.return_value = None
+        mock_aw.create_bucket.return_value = {"id": "test-target", "created": True}
+        mock_aw.get_events.return_value = [
+            {"timestamp": "2026-11-05T12:00:00Z", "duration": 60.0, "data": {"app": "foot", "title": "term"}},
+            {"timestamp": "2026-11-05T12:01:00Z", "duration": 60.0, "data": {"app": "slack", "title": "chat"}},
+        ]
+        # Target already has the first event (12:00:00Z)
+        mock_aw.get_existing_target_timestamps.return_value = {"2026-11-05T12:00:00Z"}
+        mock_aw.insert_events.side_effect = lambda bucket_id, evs: evs
+
+        classifier = FastClassifier(model_path=model_path, training_data_path=data_path)
+        oracle = GemmaOracle(backend="heuristic")
+        pipeline = ClassificationPipeline(aw_client=mock_aw, classifier=classifier, gemma_oracle=oracle)
+
+        # 1. Normal run: deduplication skips the first event
+        stats = pipeline.run(
+            source_bucket_ids=["source_bucket_1"],
+            target_bucket_id="test-target",
+            filter_afk=False,
+            force_reclassify=False,
+        )
+        assert stats["already_categorized_events_skipped"] == 1
+        assert stats["total_events_processed"] == 1
+        assert stats["events_saved_to_new_bucket"] == 1
+
+        # 2. Force run: reclassifies both events
+        stats_force = pipeline.run(
+            source_bucket_ids=["source_bucket_1"],
+            target_bucket_id="test-target",
+            filter_afk=False,
+            force_reclassify=True,
+        )
+        assert stats_force["already_categorized_events_skipped"] == 0
+        assert stats_force["total_events_processed"] == 2
+        assert stats_force["events_saved_to_new_bucket"] == 2
+
+
 

@@ -56,6 +56,7 @@ class ClassificationPipeline:
         progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
         collect_training_data: bool = True,
         max_streams: Optional[int] = None,
+        force_reclassify: bool = False,
     ) -> Dict[str, Any]:
         """Clone events from source buckets by count or time range, filter AFK intervals, and classify."""
         active_streams = max_streams if max_streams is not None else self.max_streams
@@ -97,8 +98,10 @@ class ClassificationPipeline:
         total_raw_events = 0
         total_afk_filtered = 0
         total_processed = 0
+        cached_calls = 0
         fast_calls = 0
         gemma_calls = 0
+        already_categorized_skipped = 0
         new_training_samples = 0
         afk_buckets_used: Set[str] = set()
         audible_buckets_used: Set[str] = set()
@@ -258,6 +261,31 @@ class ClassificationPipeline:
             for event in events:
                 all_events_to_classify.append((source_id, event))
 
+        # Target bucket event deduplication:
+        # If an event timestamp is already present in target_bucket_id, skip re-classifying it
+        if not force_reclassify and all_events_to_classify:
+            try:
+                existing_timestamps = set(
+                    self.aw_client.get_existing_target_timestamps(
+                        target_bucket_id,
+                        start=start_iso,
+                        end=end_iso,
+                    )
+                )
+                if existing_timestamps:
+                    orig_len = len(all_events_to_classify)
+                    all_events_to_classify = [
+                        (s_id, ev) for s_id, ev in all_events_to_classify
+                        if str(ev.get("timestamp")) not in existing_timestamps
+                    ]
+                    already_categorized_skipped = orig_len - len(all_events_to_classify)
+                    if already_categorized_skipped > 0:
+                        logger.info(
+                            f"Target Bucket Guard: Skipped {already_categorized_skipped} events already categorized in '{target_bucket_id}'"
+                        )
+            except Exception as e:
+                logger.warning(f"Could not check existing target bucket events for deduplication: {e}")
+
         total_to_classify = len(all_events_to_classify)
         logger.info(f"Total active events to classify across {len(source_bucket_ids)} buckets: {total_to_classify}")
 
@@ -300,6 +328,11 @@ class ClassificationPipeline:
                 self.classifier.predict_hierarchy(feature_text)
             )
 
+            clean_feat = anonymizer.sanitize_text(feature_text)
+            is_cached = (clean_feat in self.classifier.samples_by_text)
+            classified_by = "cached_memory" if is_cached else "fast_classifier"
+            reasoning = "Previously categorized (exact memory match)" if is_cached else f"High confidence prediction ({confidence:.2f})"
+
             rec = {
                 "source_id": source_id,
                 "event": event,
@@ -312,8 +345,8 @@ class ClassificationPipeline:
                 "chosen_subcategory": pred_subcat,
                 "chosen_full": pred_full,
                 "chosen_confidence": confidence,
-                "classified_by": "fast_classifier",
-                "reasoning": f"High confidence prediction ({confidence:.2f})",
+                "classified_by": classified_by,
+                "reasoning": reasoning,
                 "needs_gemma": False,
             }
 
@@ -408,7 +441,10 @@ class ClassificationPipeline:
         # Pass 3: Assemble results and statistics
         for idx, rec in enumerate(event_records):
             if not rec["needs_gemma"]:
-                fast_calls += 1
+                if rec["classified_by"] == "cached_memory":
+                    cached_calls += 1
+                else:
+                    fast_calls += 1
 
             cat = rec["chosen_category"]
             full = rec["chosen_full"]
@@ -459,8 +495,9 @@ class ClassificationPipeline:
                         "current": total_processed,
                         "total": total_to_classify,
                         "percent": round(pct, 1),
-                        "message": f"Processed {total_processed}/{total_to_classify} activities ({fast_calls} fast, {gemma_calls} Gemma)...",
+                        "message": f"Processed {total_processed}/{total_to_classify} activities ({cached_calls} cached, {fast_calls} fast, {gemma_calls} Gemma)...",
                         "processed": total_processed,
+                        "cached_calls": cached_calls,
                         "fast_calls": fast_calls,
                         "gemma_calls": gemma_calls,
                     }
@@ -542,6 +579,8 @@ class ClassificationPipeline:
             "afk_events_filtered_out": total_afk_filtered,
             "total_events_processed": total_processed,
             "events_saved_to_new_bucket": inserted_count,
+            "already_categorized_events_skipped": already_categorized_skipped,
+            "cached_memory_calls": cached_calls,
             "fast_classifier_calls": fast_calls,
             "gemma_oracle_calls": gemma_calls,
             "confidence_threshold": threshold,

@@ -99,6 +99,12 @@ def main():
         help="Collect novel PII-sanitized activities to expand training dataset (default: True)",
     )
     run_parser.add_argument(
+        "--force-reclassify",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Reclassify and overwrite events even if already present in target bucket (default: False)",
+    )
+    run_parser.add_argument(
         "--time-range",
         choices=["24h", "today", "7d", "week", "30d", "month", "all"],
         default=None,
@@ -286,9 +292,12 @@ def main():
             include_audible=args.include_audible,
             afk_bucket_id=args.afk_bucket,
             collect_training_data=args.collect_training_data,
+            force_reclassify=args.force_reclassify,
         )
 
         print("\nPipeline Run Completed!")
+        if results.get("already_categorized_events_skipped", 0) > 0:
+            print(f"  Already Categorized (Skipped): {results['already_categorized_events_skipped']}")
         if results.get("afk_filtering_enabled"):
             print(f"  AFK Buckets Used:        {', '.join(results.get('afk_buckets_used', [])) or 'None'}")
             if results.get("audible_intervals_used", 0) > 0:
@@ -297,6 +306,7 @@ def main():
             print(f"  Idle/AFK Events Dropped: {results.get('afk_events_filtered_out', 0)}")
         print(f"  Active Events Processed: {results['total_events_processed']}")
         print(f"  Events Saved to '{args.target}': {results['events_saved_to_new_bucket']}")
+        print(f"  Exact Memory Cache Hits: {results.get('cached_memory_calls', 0)}")
         print(f"  Fast Classifier calls:   {results['fast_classifier_calls']}")
         print(f"  Gemma Oracle calls:      {results['gemma_oracle_calls']}")
         if results.get("new_training_samples_added") is not None:
