@@ -93,6 +93,7 @@ class FastClassifier:
 
         self.is_trained = False
         self.training_samples: List[Dict[str, str]] = []
+        self._unretrained_count: int = 0
 
         # Load existing state if available
         self._load_existing_state()
@@ -211,7 +212,11 @@ class FastClassifier:
         return f"app:{app} package:{package} domain:{domain} root_domain:{root_domain} path:{path_str} title:{title} url:{url}"
 
     def predict(self, feature_text: str) -> Tuple[str, float, Dict[str, float]]:
-        """Predict full category (Category > Subcategory) and confidence score."""
+        """Predict full category (Category > Subcategory) and calibrated category confidence score.
+
+        Aggregates granular subcategory probabilities to calculate a true hierarchical parent
+        confidence score, preventing confidence dilution across 30+ granular classes.
+        """
         if not self.is_trained:
             return ("Uncategorized > General", 0.0, {})
 
@@ -220,12 +225,33 @@ class FastClassifier:
             probs = self.model.predict_proba(X)[0]
             classes = self.model.classes_
 
-            best_idx = int(np.argmax(probs))
-            predicted_full = str(classes[best_idx])
-            confidence = float(probs[best_idx])
+            # Hierarchical probability aggregation: sum subcategory probabilities by parent category
+            cat_probs: Dict[str, float] = {}
+            for cls_name, p in zip(classes, probs):
+                c, _ = split_category_path(str(cls_name))
+                cat_probs[c] = cat_probs.get(c, 0.0) + float(p)
+
+            # Determine winning top-level category and its aggregated confidence
+            best_cat = max(cat_probs.keys(), key=lambda c: cat_probs[c])
+            cat_confidence = float(cat_probs[best_cat])
+
+            # Select the most probable subcategory belonging to the winning category
+            sub_candidates = [
+                (str(cls_name), float(p))
+                for cls_name, p in zip(classes, probs)
+                if split_category_path(str(cls_name))[0] == best_cat
+            ]
+            if sub_candidates:
+                best_full, _ = max(sub_candidates, key=lambda x: x[1])
+            else:
+                best_full = f"{best_cat} > General"
 
             prob_dict = {str(c): float(p) for c, p in zip(classes, probs)}
-            return (predicted_full, confidence, prob_dict)
+            # Also store aggregated category probabilities in prob_dict for transparent inspection
+            for c, cp in cat_probs.items():
+                prob_dict[f"category:{c}"] = round(cp, 4)
+
+            return (best_full, cat_confidence, prob_dict)
         except Exception as e:
             logger.error(f"Prediction failed: {e}")
             return ("Uncategorized > General", 0.0, {})
@@ -233,7 +259,7 @@ class FastClassifier:
     def predict_hierarchy(
         self, feature_text: str
     ) -> Tuple[str, str, str, float, Dict[str, float]]:
-        """Predict category, subcategory, full_category, and confidence score."""
+        """Predict category, subcategory, full_category, and calibrated category confidence score."""
         if is_email_feature_text(feature_text):
             return ("Communication", "Email", "Communication > Email", 0.98, {"Communication > Email": 0.98})
         full_cat, conf, probs = self.predict(feature_text)
@@ -247,11 +273,13 @@ class FastClassifier:
         subcategory: Optional[str] = None,
         source: str = "gemma_oracle",
         retrain_now: bool = True,
+        retrain_batch_size: int = 10,
     ) -> bool:
         """Record newly labeled sample with full hierarchy, deduplication, and PII sanitization.
 
         Returns True if a new sample was added or an existing sample updated;
         returns False if the sample already existed with identical classification.
+        Automatically retrains every `retrain_batch_size` samples if retrain_now=False.
         """
         clean_text = anonymizer.sanitize_text(feature_text)
 
@@ -311,9 +339,12 @@ class FastClassifier:
             self.categories.append(cat)
             self.categories.sort()
 
-        if retrain_now:
-            unique_classes = set(s["full_category"] for s in self.training_samples)
-            if len(unique_classes) >= 2:
+        self._unretrained_count += 1
+        unique_classes = set(s["full_category"] for s in self.training_samples)
+        can_train = len(unique_classes) >= 2
+
+        if can_train:
+            if retrain_now or (retrain_batch_size > 0 and self._unretrained_count >= retrain_batch_size):
                 self.retrain_full()
 
         return True
@@ -334,6 +365,7 @@ class FastClassifier:
             X = self.vectorizer.fit_transform(texts)
             self.model.fit(X, labels)
             self.is_trained = True
+            self._unretrained_count = 0
             self.save_model()
             logger.info(
                 f"Retrained classifier successfully on {len(texts)} samples across {len(unique_labels)} hierarchical classes."

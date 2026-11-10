@@ -104,3 +104,41 @@ def test_browser_email_classification_not_browsing():
         assert cat == "Communication", f"Expected Communication for {ev}, got {cat}"
         assert subcat == "Email", f"Expected Email for {ev}, got {subcat}"
         assert cat != "Browsing & Research", f"Should never be Browsing & Research: {ev}"
+
+
+def test_classifier_batch_retraining_trigger():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model_path = Path(tmpdir) / "model.joblib"
+        data_path = Path(tmpdir) / "data.jsonl"
+        clf = FastClassifier(
+            model_path=model_path,
+            training_data_path=data_path,
+        )
+
+        # Add initial 2 samples with retrain_now=True to bootstrap
+        clf.add_training_sample("app:foot title:terminal", "Development", "DevOps & Terminal", retrain_now=True)
+        clf.add_training_sample("app:slack title:team", "Communication", "Team Chat", retrain_now=True)
+        assert clf.is_trained
+        assert clf._unretrained_count == 0
+
+        # Add 9 samples with retrain_now=False, retrain_batch_size=10
+        for i in range(9):
+            clf.add_training_sample(
+                f"app:browser title:doc_{i}",
+                "Browsing & Research",
+                "Search & Exploration",
+                retrain_now=False,
+                retrain_batch_size=10,
+            )
+        assert clf._unretrained_count == 9
+
+        # Add 10th sample -> should trigger automatic retraining
+        clf.add_training_sample(
+            "app:browser title:doc_final",
+            "Browsing & Research",
+            "Search & Exploration",
+            retrain_now=False,
+            retrain_batch_size=10,
+        )
+        assert clf._unretrained_count == 0
+        assert clf.get_stats()["total_training_samples"] == 12

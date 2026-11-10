@@ -381,6 +381,7 @@ class ClassificationPipeline:
                         subcategory=sub,
                         source="gemma_e2b",
                         retrain_now=False,
+                        retrain_batch_size=10,
                     )
                     if added:
                         new_training_samples += 1
@@ -396,6 +397,13 @@ class ClassificationPipeline:
                     r["chosen_confidence"] = conf
                     r["classified_by"] = by
                     r["reasoning"] = reas
+
+            # Retrain immediately after the oracle batch completes if any pending samples remain
+            if new_training_samples > 0 and self.classifier._unretrained_count > 0:
+                logger.info(
+                    f"Retraining fast classifier immediately after oracle batch ({new_training_samples} new unique samples)..."
+                )
+                self.classifier.retrain_full()
 
         # Pass 3: Assemble results and statistics
         for idx, rec in enumerate(event_records):

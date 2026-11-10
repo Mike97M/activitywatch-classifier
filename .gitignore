@@ -61,3 +61,5 @@ logs/
 # Local llama-server binaries
 bin/
 !bin/.gitkeep
+/checkpoints/
+models/distilbert_classifier/

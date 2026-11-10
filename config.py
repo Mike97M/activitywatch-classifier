@@ -114,7 +114,8 @@ def split_category_path(path: str) -> Tuple[str, str]:
 
 
 # Active Learning & Fast Classifier Thresholds
-DEFAULT_CONFIDENCE_THRESHOLD = float(os.environ.get("CONFIDENCE_THRESHOLD", "0.75"))
+# Calibrated for hierarchical category confidence across granular subcategories
+DEFAULT_CONFIDENCE_THRESHOLD = float(os.environ.get("CONFIDENCE_THRESHOLD", "0.60"))
 MODEL_PATH = MODELS_DIR / "fast_classifier.joblib"
 TRAINING_DATA_PATH = DATA_DIR / "training_data.jsonl"
 
