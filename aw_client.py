@@ -1,6 +1,7 @@
 """ActivityWatch Client with endpoint auto-detection and non-destructive operations."""
 
 import logging
+import time
 from typing import Any, Dict, List, Optional, Set, Tuple
 import httpx
 
@@ -18,6 +19,7 @@ class AWClient:
     def __init__(self, base_url: Optional[str] = None):
         self.base_url = base_url
         self._headers = {"Host": "localhost:5600", "User-Agent": "aw-classifier/1.0"}
+        self._bucket_summary_cache: Dict[str, Any] = {}
         if not self.base_url:
             self.auto_detect_server()
 
@@ -237,6 +239,8 @@ class AWClient:
         """Insert events into the designated target bucket."""
         if not events:
             return []
+        if hasattr(self, "_bucket_summary_cache"):
+            self._bucket_summary_cache.pop(bucket_id, None)
         # Chunk insert in batches of 100 to avoid request entity too large errors
         chunk_size = 100
         inserted_results = []
@@ -247,8 +251,56 @@ class AWClient:
                 inserted_results.extend(resp.json())
         return inserted_results
 
+    def get_bucket_summary(self, bucket_id: str, force_refresh: bool = False) -> Dict[str, Any]:
+        """Summarize classified activities in target bucket: total, fast_classifier, gemma, cached, etc."""
+        now = time.time()
+        cache_entry = getattr(self, "_bucket_summary_cache", {}).get(bucket_id)
+        if not force_refresh and cache_entry and (now - cache_entry.get("time", 0) < 10.0):
+            return cache_entry["data"]
+
+        try:
+            events = self.get_events(bucket_id, limit=-1)
+        except Exception as e:
+            logger.debug(f"Could not fetch events for summary of '{bucket_id}': {e}")
+            events = []
+
+        fast_count = 0
+        gemma_count = 0
+        cached_count = 0
+        human_count = 0
+
+        for e in events:
+            data = e.get("data", {}) if isinstance(e, dict) else {}
+            by = str(data.get("classified_by", "")).lower()
+            if "human" in by or "override" in by:
+                human_count += 1
+            elif "cache" in by:
+                cached_count += 1
+            elif "gemma" in by or "oracle" in by or "gemini" in by or "llm" in by:
+                gemma_count += 1
+            elif "fast" in by:
+                fast_count += 1
+            elif by:
+                fast_count += 1
+
+        summary = {
+            "bucket_id": bucket_id,
+            "total_events": len(events),
+            "fast_classifier": fast_count,
+            "gemma_oracle": gemma_count,
+            "cached_memory": cached_count,
+            "human_override": human_count,
+        }
+
+        if not hasattr(self, "_bucket_summary_cache"):
+            self._bucket_summary_cache = {}
+        self._bucket_summary_cache[bucket_id] = {"time": now, "data": summary}
+        return summary
+
     def delete_bucket(self, bucket_id: str, force: bool = False) -> bool:
         """Delete a bucket (useful for resetting the target bucket)."""
+        if hasattr(self, "_bucket_summary_cache"):
+            self._bucket_summary_cache.pop(bucket_id, None)
         try:
             params = {"force": "1"} if force else {}
             resp = self._request("DELETE", f"/api/0/buckets/{bucket_id}", params=params)

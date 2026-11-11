@@ -11,6 +11,7 @@ MODELS_DIR = BASE_DIR / "models"
 
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 MODELS_DIR.mkdir(parents=True, exist_ok=True)
+PIPELINE_STATS_FILE = DATA_DIR / "pipeline_stats.json"
 
 # ActivityWatch Server Connection
 # Auto-detects potential endpoints (VM host, localhost, or env var)

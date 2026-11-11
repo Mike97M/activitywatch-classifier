@@ -8,6 +8,75 @@ let chartMode = "main"; // 'main' or 'sub'
 let categoryChart = null;
 let lastEvents = [];
 let currentRenderedEvents = [];
+let targetBucketSummary = null;
+
+function formatNumber(num) {
+  if (num === null || num === undefined) return "0";
+  return Number(num).toLocaleString();
+}
+
+function updateClassifierStatsUI(batchFast = null, batchGemma = null) {
+  const elFast = document.getElementById("stat-fast-calls");
+  const elFastBadge = document.getElementById("stat-fast-batch-badge");
+  const elFastSub = document.getElementById("stat-fast-subtitle");
+
+  const elGemma = document.getElementById("stat-gemma-calls");
+  const elGemmaBadge = document.getElementById("stat-gemma-batch-badge");
+  const elGemmaSub = document.getElementById("stat-gemma-subtitle");
+
+  const baseFast = targetBucketSummary ? (targetBucketSummary.fast_classifier || 0) : 0;
+  const baseGemma = targetBucketSummary ? (targetBucketSummary.gemma_oracle || 0) : 0;
+  const totalInBucket = targetBucketSummary ? (targetBucketSummary.total_events || 0) : 0;
+
+  if (totalInBucket > 0) {
+    const displayFast = (batchFast !== null && batchFast !== undefined) ? (baseFast + batchFast) : baseFast;
+    const displayGemma = (batchGemma !== null && batchGemma !== undefined) ? (baseGemma + batchGemma) : baseGemma;
+
+    if (elFast) elFast.textContent = formatNumber(displayFast);
+    if (elGemma) elGemma.textContent = formatNumber(displayGemma);
+
+    if (batchFast !== null && batchFast !== undefined && batchFast > 0) {
+      if (elFastBadge) {
+        elFastBadge.textContent = `+${formatNumber(batchFast)} batch`;
+        elFastBadge.classList.remove("hidden");
+      }
+    } else if (elFastBadge) {
+      elFastBadge.classList.add("hidden");
+    }
+
+    if (batchGemma !== null && batchGemma !== undefined && batchGemma > 0) {
+      if (elGemmaBadge) {
+        elGemmaBadge.textContent = `+${formatNumber(batchGemma)} batch`;
+        elGemmaBadge.classList.remove("hidden");
+      }
+    } else if (elGemmaBadge) {
+      elGemmaBadge.classList.add("hidden");
+    }
+
+    if (elFastSub) elFastSub.textContent = `High-confidence predictions (${formatNumber(totalInBucket)} total in bucket)`;
+    if (elGemmaSub) elGemmaSub.textContent = `Teacher & active learning calls (${formatNumber(baseGemma)} resolved)`;
+  } else {
+    if (elFast) elFast.textContent = formatNumber(batchFast || 0);
+    if (elGemma) elGemma.textContent = formatNumber(batchGemma || 0);
+    if (elFastBadge) elFastBadge.classList.add("hidden");
+    if (elGemmaBadge) elGemmaBadge.classList.add("hidden");
+    if (elFastSub) elFastSub.textContent = "High-confidence predictions";
+    if (elGemmaSub) elGemmaSub.textContent = "Teacher & active learning calls";
+  }
+}
+
+async function fetchBucketSummary() {
+  const targetId = document.getElementById("target-bucket-id")?.value.trim() || "aw-classifier-categorized";
+  try {
+    const res = await fetch(`/api/bucket-stats?bucket_id=${encodeURIComponent(targetId)}`);
+    if (res.ok) {
+      targetBucketSummary = await res.json();
+      updateClassifierStatsUI();
+    }
+  } catch (e) {
+    console.debug("Could not fetch bucket summary:", e);
+  }
+}
 
 // Running Task Tracking & Polling
 let activeTaskPoller = null;
@@ -110,10 +179,15 @@ async function fetchStatus() {
     currentCategories = data.classifier.all_configured_categories || [];
     currentTaxonomy = data.classifier.taxonomy || data.gemma_oracle.taxonomy || {};
 
-    // Last run stats if available
+    // Target bucket summary & Last run stats
+    if (data.target_bucket_summary) {
+      targetBucketSummary = data.target_bucket_summary;
+    }
+    const lastBatchFast = data.last_run_stats ? data.last_run_stats.fast_classifier_calls : null;
+    const lastBatchGemma = data.last_run_stats ? data.last_run_stats.gemma_oracle_calls : null;
+    updateClassifierStatsUI(lastBatchFast, lastBatchGemma);
+
     if (data.last_run_stats && data.last_run_stats.total_events_processed) {
-      document.getElementById("stat-fast-calls").textContent = data.last_run_stats.fast_classifier_calls || 0;
-      document.getElementById("stat-gemma-calls").textContent = data.last_run_stats.gemma_oracle_calls || 0;
       currentCategoryDist = data.last_run_stats.category_distribution || {};
       currentSubcategoryDist = data.last_run_stats.subcategory_distribution || {};
       refreshChart();
@@ -348,14 +422,7 @@ function updateTaskProgressUI(task) {
   }
 
   if (p.stats) {
-    if (p.stats.fast_calls !== undefined) {
-      const el = document.getElementById("stat-fast-calls");
-      if (el) el.textContent = p.stats.fast_calls;
-    }
-    if (p.stats.gemma_calls !== undefined) {
-      const el = document.getElementById("stat-gemma-calls");
-      if (el) el.textContent = p.stats.gemma_calls;
-    }
+    updateClassifierStatsUI(p.stats.fast_calls, p.stats.gemma_calls);
   }
 
   // Real-time live events streaming to table
@@ -395,12 +462,11 @@ async function applyTaskResults(task) {
   if (progressPercent) progressPercent.textContent = "100% Done";
   if (progressStatusText) progressStatusText.textContent = "Activities classified and saved to ActivityWatch.";
 
-  if (results.fast_classifier_calls !== undefined) {
-    document.getElementById("stat-fast-calls").textContent = results.fast_classifier_calls;
-  }
-  if (results.gemma_oracle_calls !== undefined) {
-    document.getElementById("stat-gemma-calls").textContent = results.gemma_oracle_calls;
-  }
+  const batchFast = results.fast_classifier_calls !== undefined ? results.fast_classifier_calls : null;
+  const batchGemma = results.gemma_oracle_calls !== undefined ? results.gemma_oracle_calls : null;
+  updateClassifierStatsUI(batchFast, batchGemma);
+  await fetchBucketSummary();
+
   if (results.classifier_stats?.total_training_samples !== undefined) {
     document.getElementById("stat-training-samples").textContent = results.classifier_stats.total_training_samples;
   }
@@ -572,6 +638,7 @@ async function loadTargetEvents(targetBucketId = null) {
       renderEventsTable(lastEvents);
       document.getElementById("target-bucket-info").textContent = `${lastEvents.length} events categorized in '${bid}'`;
     }
+    await fetchBucketSummary();
   } catch (err) {
     console.error("Failed loading target events:", err);
   }

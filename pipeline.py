@@ -1,6 +1,7 @@
 """Pipeline coordinating ActivityWatch buckets, AFK filtering, FastClassifier, and Gemma Oracle with hierarchical subcategories."""
 
 from datetime import timedelta
+import json
 import logging
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Set
@@ -16,6 +17,7 @@ from classifier import FastClassifier
 from config import (
     DEFAULT_CONFIDENCE_THRESHOLD,
     DEFAULT_TARGET_BUCKET_ID,
+    PIPELINE_STATS_FILE,
     TRAINING_DATA_PATH,
     split_category_path,
 )
@@ -40,6 +42,11 @@ class ClassificationPipeline:
         self.max_streams = max_streams
 
         self.last_run_stats: Dict[str, Any] = {}
+        if PIPELINE_STATS_FILE.exists():
+            try:
+                self.last_run_stats = json.loads(PIPELINE_STATS_FILE.read_text(encoding="utf-8"))
+            except Exception as e:
+                logger.debug(f"Could not load previous pipeline stats: {e}")
 
     def run(
         self,
@@ -357,6 +364,11 @@ class ClassificationPipeline:
                 events_needing_gemma.setdefault(sig, []).append(idx)
                 gemma_sig_features[sig] = feature_text
             else:
+                if is_cached:
+                    cached_calls += 1
+                else:
+                    fast_calls += 1
+
                 live_item = {
                     "timestamp": event.get("timestamp"),
                     "duration": event.get("duration", 0.0),
@@ -387,8 +399,9 @@ class ClassificationPipeline:
                     "message": f"Classifying activities: {idx + 1}/{total_to_classify} ({len(live_preview_events)} categorized)...",
                     "live_events": list(live_preview_events),
                     "stats": {
-                        "fast_calls": sum(1 for r in live_preview_events if r.get("classified_by") == "fast_classifier"),
-                        "cached_calls": sum(1 for r in live_preview_events if r.get("classified_by") == "cached_memory"),
+                        "fast_calls": fast_calls,
+                        "cached_calls": cached_calls,
+                        "gemma_calls": gemma_calls,
                     },
                 })
 
@@ -507,12 +520,6 @@ class ClassificationPipeline:
 
         # Pass 3: Assemble results and statistics
         for idx, rec in enumerate(event_records):
-            if not rec["needs_gemma"]:
-                if rec["classified_by"] == "cached_memory":
-                    cached_calls += 1
-                else:
-                    fast_calls += 1
-
             cat = rec["chosen_category"]
             full = rec["chosen_full"]
             category_distribution[cat] = category_distribution.get(cat, 0) + 1
@@ -565,10 +572,12 @@ class ClassificationPipeline:
                         "percent": round(pct, 1),
                         "message": f"Processed {total_processed}/{total_to_classify} activities ({cached_calls} cached, {fast_calls} fast, {gemma_calls} Gemma)...",
                         "processed": total_processed,
-                        "cached_calls": cached_calls,
-                        "fast_calls": fast_calls,
-                        "gemma_calls": gemma_calls,
                         "live_events": list(live_preview_events),
+                        "stats": {
+                            "cached_calls": cached_calls,
+                            "fast_calls": fast_calls,
+                            "gemma_calls": gemma_calls,
+                        },
                     }
                 )
 
@@ -660,6 +669,10 @@ class ClassificationPipeline:
             "classifier_stats": self.classifier.get_stats(),
         }
         self.last_run_stats = stats
+        try:
+            PIPELINE_STATS_FILE.write_text(json.dumps(stats, indent=2), encoding="utf-8")
+        except Exception as e:
+            logger.debug(f"Could not persist pipeline stats: {e}")
 
         if progress_callback:
             progress_callback({

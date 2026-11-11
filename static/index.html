@@ -118,8 +118,11 @@
           <span class="text-[11px] font-semibold uppercase tracking-wider font-varela">Fast Classifier</span>
           <i class="fa-solid fa-bolt text-aw"></i>
         </div>
-        <div class="text-2xl font-bold font-varela" id="stat-fast-calls">0</div>
-        <div class="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">High-confidence predictions</div>
+        <div class="flex items-baseline space-x-1.5">
+          <div class="text-2xl font-bold font-varela" id="stat-fast-calls">0</div>
+          <span id="stat-fast-batch-badge" class="hidden text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 font-semibold">+0 batch</span>
+        </div>
+        <div class="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5" id="stat-fast-subtitle">High-confidence predictions</div>
       </div>
 
       <div class="aw-card p-4">
@@ -127,8 +130,11 @@
           <span class="text-[11px] font-semibold uppercase tracking-wider font-varela">Gemma 4 E2B Oracle</span>
           <i class="fa-solid fa-wand-magic-sparkles text-purple-500"></i>
         </div>
-        <div class="text-2xl font-bold font-varela text-purple-600 dark:text-purple-400" id="stat-gemma-calls">0</div>
-        <div class="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">Teacher & active learning calls</div>
+        <div class="flex items-baseline space-x-1.5">
+          <div class="text-2xl font-bold font-varela text-purple-600 dark:text-purple-400" id="stat-gemma-calls">0</div>
+          <span id="stat-gemma-batch-badge" class="hidden text-[10px] font-mono px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-500 border border-purple-500/20 font-semibold">+0 batch</span>
+        </div>
+        <div class="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5" id="stat-gemma-subtitle">Teacher & active learning calls</div>
       </div>
 
       <div class="aw-card p-4">

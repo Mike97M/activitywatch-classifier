@@ -128,6 +128,8 @@ def get_status() -> Dict[str, Any]:
     )
 
     from llama_server_manager import llama_server
+    target_summary = aw_client.get_bucket_summary(DEFAULT_TARGET_BUCKET_ID)
+
     return {
         "activitywatch": aw_status,
         "classifier": classifier_stats,
@@ -135,8 +137,16 @@ def get_status() -> Dict[str, Any]:
         "llama_server": llama_server.get_status(),
         "confidence_threshold": pipeline.confidence_threshold,
         "last_run_stats": pipeline.last_run_stats,
+        "target_bucket_summary": target_summary,
         "active_task": active_dict,
     }
+
+
+@app.get("/api/bucket-stats")
+def get_bucket_stats_api(bucket_id: Optional[str] = None) -> Dict[str, Any]:
+    """Return classified activity summary for target bucket."""
+    bid = bucket_id or DEFAULT_TARGET_BUCKET_ID
+    return aw_client.get_bucket_summary(bid, force_refresh=True)
 
 
 @app.get("/api/tasks/active")

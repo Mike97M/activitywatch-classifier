@@ -14,7 +14,17 @@ def test_get_status():
     assert "classifier" in data
     assert "gemma_oracle" in data
     assert "confidence_threshold" in data
+    assert "target_bucket_summary" in data
     assert "local_model" in data["gemma_oracle"]
+
+
+def test_get_bucket_stats():
+    response = client.get("/api/bucket-stats")
+    assert response.status_code == 200
+    data = response.json()
+    assert "total_events" in data
+    assert "fast_classifier" in data
+    assert "gemma_oracle" in data
 
 
 def test_get_buckets():
