@@ -7,6 +7,7 @@ let currentSubcategoryDist = {};
 let chartMode = "main"; // 'main' or 'sub'
 let categoryChart = null;
 let lastEvents = [];
+let currentRenderedEvents = [];
 
 // Running Task Tracking & Polling
 let activeTaskPoller = null;
@@ -356,6 +357,24 @@ function updateTaskProgressUI(task) {
       if (el) el.textContent = p.stats.gemma_calls;
     }
   }
+
+  // Real-time live events streaming to table
+  if (p.live_events && p.live_events.length > 0) {
+    lastEvents = p.live_events;
+    const filterInput = document.getElementById("filter-events-input");
+    const query = filterInput ? filterInput.value.toLowerCase().trim() : "";
+    let toRender = lastEvents;
+    if (query) {
+      toRender = lastEvents.filter(
+        (ev) =>
+          (ev.app || "").toLowerCase().includes(query) ||
+          (ev.title || "").toLowerCase().includes(query) ||
+          (ev.category || "").toLowerCase().includes(query) ||
+          (ev.url || "").toLowerCase().includes(query)
+      );
+    }
+    renderEventsTable(toRender, true);
+  }
 }
 
 async function applyTaskResults(task) {
@@ -398,6 +417,12 @@ async function applyTaskResults(task) {
   currentSubcategoryDist = results.subcategory_distribution || {};
   refreshChart();
 
+  const liveBadge = document.getElementById("live-classifying-badge");
+  if (liveBadge) {
+    liveBadge.classList.add("hidden");
+    liveBadge.classList.remove("inline-flex");
+  }
+
   if (results.recent_preview && results.recent_preview.length > 0) {
     renderEventsTable(results.recent_preview);
   } else {
@@ -413,6 +438,13 @@ async function applyTaskResults(task) {
 }
 
 function hideTaskProgress() {
+  activeTaskId = null;
+  const liveBadge = document.getElementById("live-classifying-badge");
+  if (liveBadge) {
+    liveBadge.classList.add("hidden");
+    liveBadge.classList.remove("inline-flex");
+  }
+
   const btn = document.getElementById("btn-run-pipeline");
   const btnText = document.getElementById("btn-run-text");
   const btnIcon = document.getElementById("btn-run-icon");
@@ -545,8 +577,21 @@ async function loadTargetEvents(targetBucketId = null) {
   }
 }
 
-function renderEventsTable(events) {
+function renderEventsTable(events, isLive = false) {
+  currentRenderedEvents = events || [];
   const tbody = document.getElementById("events-tbody");
+  const liveBadge = document.getElementById("live-classifying-badge");
+
+  if (liveBadge) {
+    if (isLive) {
+      liveBadge.classList.remove("hidden");
+      liveBadge.classList.add("inline-flex");
+    } else {
+      liveBadge.classList.add("hidden");
+      liveBadge.classList.remove("inline-flex");
+    }
+  }
+
   if (!events || events.length === 0) {
     tbody.innerHTML = `<tr><td colspan="7" class="px-4 py-8 text-center text-slate-500">No events found in target bucket.</td></tr>`;
     return;
@@ -560,7 +605,29 @@ function renderEventsTable(events) {
     const dateStr = ev.timestamp ? new Date(ev.timestamp).toLocaleTimeString() : "--:--";
     const durationStr = formatDuration(ev.duration);
     const catClass = getCategoryBadgeClass(ev.category);
-    const isGemma = (ev.classified_by || "").includes("gemma");
+
+    const classifiedBy = (ev.classified_by || "").toLowerCase();
+    const isHuman = classifiedBy.includes("human") || classifiedBy.includes("override");
+    const isCached = classifiedBy.includes("cache");
+    const isGemma = classifiedBy.includes("gemma") || classifiedBy.includes("oracle") || classifiedBy.includes("llm") || classifiedBy.includes("gemini");
+
+    let badgeClass = "bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800/60";
+    let badgeIcon = "fa-bolt";
+    let badgeLabel = "Fast Classifier";
+
+    if (isHuman) {
+      badgeClass = "bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800/60";
+      badgeIcon = "fa-user-pen";
+      badgeLabel = "Human Override";
+    } else if (isCached) {
+      badgeClass = "bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800/60";
+      badgeIcon = "fa-memory";
+      badgeLabel = "Exact Cache";
+    } else if (isGemma) {
+      badgeClass = "bg-purple-100 dark:bg-purple-950 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800/60";
+      badgeIcon = "fa-wand-magic-sparkles";
+      badgeLabel = "Gemma 4 E2B";
+    }
 
     tr.innerHTML = `
       <td class="px-4 py-3 whitespace-nowrap text-slate-500 dark:text-slate-400 font-mono text-[11px]">
@@ -598,11 +665,9 @@ function renderEventsTable(events) {
         </div>
       </td>
       <td class="px-4 py-3 whitespace-nowrap">
-        <span class="px-2 py-0.5 rounded text-[10px] font-mono ${
-          isGemma ? 'bg-purple-100 dark:bg-purple-950 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800/60' : 'bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800/60'
-        }">
-          <i class="fa-solid ${isGemma ? 'fa-wand-magic-sparkles' : 'fa-bolt'} mr-1"></i>
-          ${isGemma ? 'Gemma 4 E2B' : 'Fast Classifier'}
+        <span class="px-2 py-0.5 rounded text-[10px] font-mono ${badgeClass}">
+          <i class="fa-solid ${badgeIcon} mr-1"></i>
+          ${badgeLabel}
         </span>
       </td>
       <td class="px-4 py-3 whitespace-nowrap text-right">
@@ -616,7 +681,7 @@ function renderEventsTable(events) {
 }
 
 function openCorrectionDialog(idx) {
-  const ev = lastEvents[idx];
+  const ev = currentRenderedEvents[idx] || lastEvents[idx];
   if (!ev) return;
 
   const currentFull = ev.full_category || `${ev.category} > ${ev.subcategory || 'General'}`;
@@ -655,10 +720,10 @@ function openCorrectionDialog(idx) {
   }
 
   const featureText = `app:${ev.app} title:${ev.title} url:${ev.url}`;
-  submitCorrection(featureText, cat, sub, idx);
+  submitCorrection(featureText, cat, sub, ev);
 }
 
-async function submitCorrection(featureText, correctCategory, correctSubcategory, idx) {
+async function submitCorrection(featureText, correctCategory, correctSubcategory, targetEvent) {
   try {
     const res = await fetch("/api/correct-event", {
       method: "POST",
@@ -671,13 +736,13 @@ async function submitCorrection(featureText, correctCategory, correctSubcategory
     });
 
     if (res.ok) {
-      if (lastEvents[idx]) {
-        lastEvents[idx].category = correctCategory;
-        lastEvents[idx].subcategory = correctSubcategory;
-        lastEvents[idx].full_category = `${correctCategory} > ${correctSubcategory}`;
-        lastEvents[idx].confidence = 1.0;
-        lastEvents[idx].classified_by = "Human Feedback (Retrained)";
-        renderEventsTable(lastEvents);
+      if (targetEvent) {
+        targetEvent.category = correctCategory;
+        targetEvent.subcategory = correctSubcategory;
+        targetEvent.full_category = `${correctCategory} > ${correctSubcategory}`;
+        targetEvent.confidence = 1.0;
+        targetEvent.classified_by = "Human Feedback (Retrained)";
+        renderEventsTable(currentRenderedEvents.length > 0 ? currentRenderedEvents : lastEvents);
       }
       await fetchStatus();
     }
@@ -903,19 +968,20 @@ function setupEventListeners() {
 
   // Filter events
   document.getElementById("filter-events-input").addEventListener("input", (e) => {
+    const isLive = activeTaskId !== null && !document.getElementById("progress-container")?.classList.contains("hidden");
     const query = e.target.value.toLowerCase().trim();
     if (!query) {
-      renderEventsTable(lastEvents);
+      renderEventsTable(lastEvents, isLive);
       return;
     }
     const filtered = lastEvents.filter(
       (ev) =>
-        ev.app.toLowerCase().includes(query) ||
-        ev.title.toLowerCase().includes(query) ||
-        ev.category.toLowerCase().includes(query) ||
-        ev.url.toLowerCase().includes(query)
+        (ev.app || "").toLowerCase().includes(query) ||
+        (ev.title || "").toLowerCase().includes(query) ||
+        (ev.category || "").toLowerCase().includes(query) ||
+        (ev.url || "").toLowerCase().includes(query)
     );
-    renderEventsTable(filtered);
+    renderEventsTable(filtered, isLive);
   });
 
   // Settings modal

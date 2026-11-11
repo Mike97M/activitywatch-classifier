@@ -31,6 +31,7 @@ class Task:
             "message": "Task queued...",
             "step": "pending",
             "stats": {},
+            "live_events": [],
         }
         self.results: Optional[Dict[str, Any]] = None
         self.error: Optional[str] = None
@@ -43,6 +44,7 @@ class Task:
         message: str = "",
         step: str = "running",
         stats: Optional[Dict[str, Any]] = None,
+        live_events: Optional[List[Dict[str, Any]]] = None,
     ):
         """Update live task progress."""
         if percent is None:
@@ -60,6 +62,8 @@ class Task:
             self.progress["step"] = step
         if stats:
             self.progress["stats"].update(stats)
+        if live_events is not None:
+            self.progress["live_events"] = live_events
 
     def to_dict(self) -> Dict[str, Any]:
         """Serialize task state for JSON API."""
@@ -165,6 +169,7 @@ class TaskManager:
                     message=update.get("message", ""),
                     step=update.get("step", "running"),
                     stats=update.get("stats", update),
+                    live_events=update.get("live_events"),
                 )
 
             kwargs = dict(fn_kwargs or {})

@@ -294,6 +294,7 @@ class ClassificationPipeline:
         event_records: List[Dict[str, Any]] = []
         events_needing_gemma: Dict[Tuple[str, str, str], List[int]] = {}
         gemma_sig_features: Dict[Tuple[str, str, str], str] = {}
+        live_preview_events: List[Dict[str, Any]] = []
 
         for idx, (source_id, event) in enumerate(all_events_to_classify):
             raw_data = event.get("data", {})
@@ -355,8 +356,41 @@ class ClassificationPipeline:
                 sig = (app, title, url)
                 events_needing_gemma.setdefault(sig, []).append(idx)
                 gemma_sig_features[sig] = feature_text
+            else:
+                live_item = {
+                    "timestamp": event.get("timestamp"),
+                    "duration": event.get("duration", 0.0),
+                    "app": app,
+                    "title": title,
+                    "url": url,
+                    "category": pred_cat,
+                    "subcategory": pred_subcat,
+                    "full_category": pred_full,
+                    "confidence": round(confidence, 3),
+                    "classified_by": classified_by,
+                    "reasoning": reasoning,
+                    "source_bucket": source_id,
+                }
+                live_preview_events.insert(0, live_item)
+                if len(live_preview_events) > 60:
+                    live_preview_events.pop()
 
             event_records.append(rec)
+
+            if progress_callback and (len(live_preview_events) > 0 and ((idx + 1) % 5 == 0 or idx == total_to_classify - 1)):
+                pct = round(15.0 + (float(idx + 1) / max(1, total_to_classify)) * 15.0, 1)
+                progress_callback({
+                    "step": "fast_classifying",
+                    "current": idx + 1,
+                    "total": total_to_classify,
+                    "percent": pct,
+                    "message": f"Classifying activities: {idx + 1}/{total_to_classify} ({len(live_preview_events)} categorized)...",
+                    "live_events": list(live_preview_events),
+                    "stats": {
+                        "fast_calls": sum(1 for r in live_preview_events if r.get("classified_by") == "fast_classifier"),
+                        "cached_calls": sum(1 for r in live_preview_events if r.get("classified_by") == "cached_memory"),
+                    },
+                })
 
         # Pass 2: Batch Gemma multi-stream parallel decoding for unique signatures
         unique_sigs = list(events_needing_gemma.keys())
@@ -430,6 +464,39 @@ class ClassificationPipeline:
                     r["chosen_confidence"] = conf
                     r["classified_by"] = by
                     r["reasoning"] = reas
+                    r["needs_gemma"] = False
+
+                    # Push newly resolved Gemma item into live preview
+                    live_item = {
+                        "timestamp": r["event"].get("timestamp"),
+                        "duration": r["event"].get("duration", 0.0),
+                        "app": r["app"],
+                        "title": r["title"],
+                        "url": r["url"],
+                        "category": cat,
+                        "subcategory": sub,
+                        "full_category": full,
+                        "confidence": round(conf, 3),
+                        "classified_by": by,
+                        "reasoning": reas,
+                        "source_bucket": r["source_id"],
+                    }
+                    live_preview_events.insert(0, live_item)
+                    if len(live_preview_events) > 60:
+                        live_preview_events.pop()
+
+            if progress_callback:
+                progress_callback({
+                    "step": "gemma_batch_done",
+                    "percent": 80.0,
+                    "message": f"Completed Gemma evaluation ({gemma_calls} activities resolved)...",
+                    "live_events": list(live_preview_events),
+                    "stats": {
+                        "fast_calls": fast_calls,
+                        "gemma_calls": gemma_calls,
+                        "cached_calls": cached_calls,
+                    },
+                })
 
             # Retrain immediately after the oracle batch completes if any pending samples remain
             if new_training_samples > 0 and self.classifier._unretrained_count > 0:
@@ -488,7 +555,7 @@ class ClassificationPipeline:
                     }
                 )
 
-            if progress_callback and (total_processed % 20 == 0 or total_processed == total_to_classify):
+            if progress_callback and (total_processed % 5 == 0 or total_processed == total_to_classify):
                 pct = 80.0 + (float(total_processed) / max(1, total_to_classify)) * 5.0
                 progress_callback(
                     {
@@ -501,6 +568,7 @@ class ClassificationPipeline:
                         "cached_calls": cached_calls,
                         "fast_calls": fast_calls,
                         "gemma_calls": gemma_calls,
+                        "live_events": list(live_preview_events),
                     }
                 )
 
@@ -601,6 +669,7 @@ class ClassificationPipeline:
                 "percent": 100.0,
                 "message": f"Successfully classified {total_processed} activities!",
                 "results": stats,
+                "live_events": recent_preview[:50],
             })
 
         return stats
