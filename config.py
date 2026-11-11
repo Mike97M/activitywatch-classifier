@@ -64,6 +64,7 @@ DEFAULT_TAXONOMY: Dict[str, List[str]] = {
     ],
     "Browsing & Research": [
         "Search & Exploration",
+        "AI & Research",
         "Technical Articles & Papers",
         "Shopping & E-Commerce",
     ],

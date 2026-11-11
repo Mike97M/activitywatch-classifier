@@ -63,7 +63,8 @@ SUBCATEGORY_COLORS: Dict[Tuple[str, str], str] = {
 
     # Browsing & Research (Royal Blue & Indigo & Violet)
     ("Browsing & Research", "Search & Exploration"): "#3b82f6",     # Royal Blue
-    ("Browsing & Research", "Technical Articles & Papers"): "#6366f1", # Indigo
+    ("Browsing & Research", "AI & Research"): "#6366f1",            # Vibrant Indigo
+    ("Browsing & Research", "Technical Articles & Papers"): "#0ea5e9", # Cyan-Blue
     ("Browsing & Research", "Shopping & E-Commerce"): "#8b5cf6",    # Violet
     ("Browsing & Research", "General"): "#35495E",
 
@@ -206,7 +207,7 @@ GENERIC_DOMAINS: Set[str] = {
 # Baseline regex keywords for each subcategory matching DEFAULT_TAXONOMY
 SUBCATEGORY_SEEDS: Dict[str, Dict[str, str]] = {
     "Development": {
-        "Coding & IDE": r"\b(nvim|neovim|vim|gvim|code|vscode|vscodium|zed|sublime|sublime_text|pycharm|intellij|webstorm|clion|emacs|helix|0\.0\.0\.0|127\.0\.0\.1|localhost|activitywatch classifier|claude\.ai|claude|chatgpt|chatgpt\.com|chat\.openai\.com|platform\.openai\.com|aistudio|aistudio\.google\.com|gemini\.google\.com|antigravity|cursor|copilot|jupyter|colab|replit|v0\.dev|bolt\.new)\b",
+        "Coding & IDE": r"\b(nvim|neovim|vim|gvim|code|vscode|vscodium|zed|sublime|sublime_text|pycharm|intellij|webstorm|clion|emacs|helix|0\.0\.0\.0|127\.0\.0\.1|localhost|activitywatch classifier|antigravity|cursor|copilot|jupyter|colab|replit|v0\.dev|bolt\.new)\b",
         "DevOps & Terminal": r"\b(foot|kitty|alacritty|ptyxis|gnome-terminal|konsole|xterm|termux|bash|zsh|fish|tmux|screen|docker|podman|kubectl|ssh|ansible|terraform|django|scraper|your-server\.de)\b",
         "Git & Code Review": r"\b(git|github|github\.com|gitlab|gitlab\.com|bitbucket|bitbucket\.org|lazygit|gitkraken|sourcetree|pull request|commit|merge request|diff)\b",
         "Documentation & API": r"\b(docs|api|swagger|postman|insomnia|devdocs|devdocs\.io|readthedocs|readthedocs\.io|developer\.mozilla\.org|mdn|manpage)\b",
@@ -238,6 +239,7 @@ SUBCATEGORY_SEEDS: Dict[str, Dict[str, str]] = {
     },
     "Browsing & Research": {
         "Search & Exploration": r"\b(google search|duckduckgo|duckduckgo\.com|bing search|bing\.com|brave search|search\.brave\.com|kagi|kagi\.com|searx|search)\b",
+        "AI & Research": r"\b(claude\.ai|claude|chatgpt|chatgpt\.com|chat\.openai\.com|platform\.openai\.com|aistudio|aistudio\.google\.com|gemini\.google\.com|gemini|perplexity|perplexity\.ai|poe\.com|copilot\.microsoft\.com|meta\.ai|mistral\.ai|lechat|deepseek|deepseek\.com|groq\.com)\b",
         "Technical Articles & Papers": r"\b(stackoverflow|stackoverflow\.com|stackexchange|stackexchange\.com|readthedocs|developer\.mozilla|python\.org|pkg\.go\.dev|crates\.io|huggingface|huggingface\.co|arxiv|arxiv\.org|artificialanalysis|medium\.com|substack\.com)\b",
         "Shopping & E-Commerce": r"\b(amazon|ebay|aliexpress|shopify|cart|checkout|trumf|bergfreunde\.no)\b",
     },

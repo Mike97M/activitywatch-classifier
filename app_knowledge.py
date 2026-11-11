@@ -222,9 +222,24 @@ PRESEEDED_KNOWLEDGE: Dict[str, Dict[str, Any]] = {
         "subcategory": "DevOps & Terminal",
     },
     "claude": {
-        "description": "Anthropic AI assistant app for programming, reasoning, and technical analysis.",
-        "category": "Development",
-        "subcategory": "Coding & IDE",
+        "description": "Anthropic AI assistant for research, reasoning, writing, and exploration.",
+        "category": "Browsing & Research",
+        "subcategory": "AI & Research",
+    },
+    "chatgpt": {
+        "description": "OpenAI conversational AI assistant for research, Q&A, and exploration.",
+        "category": "Browsing & Research",
+        "subcategory": "AI & Research",
+    },
+    "gemini": {
+        "description": "Google Gemini multimodal AI assistant for research and exploration.",
+        "category": "Browsing & Research",
+        "subcategory": "AI & Research",
+    },
+    "aistudio": {
+        "description": "Google AI Studio web interface for model experimentation and research.",
+        "category": "Browsing & Research",
+        "subcategory": "AI & Research",
     },
     "antigravity": {
         "description": "AI-assisted development agent and IDE coding environment.",

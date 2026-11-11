@@ -30,7 +30,7 @@ def test_build_activitywatch_classes_structure():
 def test_build_activitywatch_classes_with_training_samples():
     training_samples = [
         {
-            "text": "app:firefox domain:aistudio.google.com root_domain:google.com title:AI Studio",
+            "text": "app:firefox domain:zed.dev root_domain:zed.dev title:Zed Editor",
             "category": "Development",
             "subcategory": "Coding & IDE",
         },
@@ -39,14 +39,22 @@ def test_build_activitywatch_classes_with_training_samples():
             "category": "Communication",
             "subcategory": "Team Chat",
         },
+        {
+            "text": "app:brave domain:claude.ai root_domain:claude.ai title:research report",
+            "category": "Browsing & Research",
+            "subcategory": "AI & Research",
+        },
     ]
 
     classes = build_activitywatch_classes(training_samples=training_samples)
     coding_class = next(c for c in classes if c["name"] == ["Development", "Coding & IDE"])
-    assert "aistudio\\.google\\.com" in coding_class["rule"]["regex"]
+    assert "zed\\.dev" in coding_class["rule"]["regex"]
 
     chat_class = next(c for c in classes if c["name"] == ["Communication", "Team Chat"])
     assert "app\\.slack\\.com" in chat_class["rule"]["regex"]
+
+    ai_class = next(c for c in classes if c["name"] == ["Browsing & Research", "AI & Research"])
+    assert "claude\\.ai" in ai_class["rule"]["regex"]
 
 
 def test_sync_taxonomy_to_activitywatch():
