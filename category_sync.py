@@ -22,6 +22,80 @@ CATEGORY_COLORS: Dict[str, str] = {
     "Uncategorized": "#94a3b8",        # Muted Gray
 }
 
+# Granular, harmonious per-subcategory color palette for Sunburst, Timeline, and Window Titles
+SUBCATEGORY_COLORS: Dict[Tuple[str, str], str] = {
+    # Development (Teal & Emerald & Cyan family)
+    ("Development", "Coding & IDE"): "#10b981",          # Emerald
+    ("Development", "DevOps & Terminal"): "#06b6d4",     # Cyan
+    ("Development", "Git & Code Review"): "#34d399",     # Mint
+    ("Development", "Documentation & API"): "#2dd4bf",   # Light Teal
+    ("Development", "Debugging & Testing"): "#0f766e",   # Deep Pine
+    ("Development", "General"): "#4DBA87",
+
+    # Communication (Sky Blue & Cobalt & Indigo family)
+    ("Communication", "Team Chat"): "#38bdf8",           # Sky Blue
+    ("Communication", "Email"): "#60a5fa",               # Soft Cobalt
+    ("Communication", "Calls & Meetings"): "#818cf8",    # Light Indigo
+    ("Communication", "General"): "#0284c7",
+
+    # Education & Learning (Teal & Ocean Blue)
+    ("Education & Learning", "Language Learning"): "#14b8a6",  # Vibrant Teal
+    ("Education & Learning", "Courses & Tutorials"): "#0ea5e9",# Ocean Blue
+    ("Education & Learning", "Reading & Reference"): "#0d9488",# Deep Turquoise
+    ("Education & Learning", "General"): "#06b6d4",
+
+    # Finance & Banking (Green & Lime)
+    ("Finance & Banking", "Banking & Payments"): "#16a34a",     # Forest Green
+    ("Finance & Banking", "Investments & Trading"): "#84cc16",   # Lime Green
+    ("Finance & Banking", "General"): "#10b981",
+
+    # Travel & Navigation (Orange & Tangerine & Rust)
+    ("Travel & Navigation", "Public Transit & Tickets"): "#f97316", # Orange
+    ("Travel & Navigation", "Maps & Rides"): "#fb923c",            # Tangerine
+    ("Travel & Navigation", "Car & EV Utilities"): "#ea580c",      # Rust Orange
+    ("Travel & Navigation", "Lodging & Trips"): "#fdba74",         # Warm Peach
+    ("Travel & Navigation", "General"): "#f97316",
+
+    # Health & Fitness (Hot Pink & Magenta)
+    ("Health & Fitness", "Workouts & Gym"): "#ec4899",             # Hot Pink
+    ("Health & Fitness", "Health Trackers"): "#f472b6",            # Soft Rose Pink
+    ("Health & Fitness", "General"): "#db2777",
+
+    # Browsing & Research (Royal Blue & Indigo & Violet)
+    ("Browsing & Research", "Search & Exploration"): "#3b82f6",     # Royal Blue
+    ("Browsing & Research", "Technical Articles & Papers"): "#6366f1", # Indigo
+    ("Browsing & Research", "Shopping & E-Commerce"): "#8b5cf6",    # Violet
+    ("Browsing & Research", "General"): "#35495E",
+
+    # Productivity & Planning (Purple & Violet & Lavender)
+    ("Productivity & Planning", "Notes & Knowledge Base"): "#a855f7", # Purple
+    ("Productivity & Planning", "Task & Project Management"): "#9333ea", # Deep Violet
+    ("Productivity & Planning", "Docs & Spreadsheets"): "#c084fc",     # Lavender
+    ("Productivity & Planning", "General"): "#7e22ce",
+
+    # Media & Entertainment (Amber & Gold & Yellow)
+    ("Media & Entertainment", "Video & Streaming"): "#f59e0b",    # Amber Gold
+    ("Media & Entertainment", "Music & Audio"): "#eab308",        # Bright Gold
+    ("Media & Entertainment", "Gaming"): "#d97706",               # Bronze Amber
+    ("Media & Entertainment", "General"): "#b45309",
+
+    # Social Media (Twitter Sky & Reddit Coral & LinkedIn Blue)
+    ("Social Media", "X / Twitter"): "#0284c7",                   # Twitter Sky Blue
+    ("Social Media", "Reddit & Communities"): "#f43f5e",          # Reddit Coral Rose
+    ("Social Media", "LinkedIn & Professional"): "#0a66c2",       # LinkedIn Deep Blue
+    ("Social Media", "General"): "#e11d48",
+
+    # System & Admin (Slate & Charcoal)
+    ("System & Admin", "OS & Desktop Settings"): "#64748b",       # Slate Gray
+    ("System & Admin", "Hardware & System Monitor"): "#475569",   # Dark Slate
+    ("System & Admin", "Package Management"): "#94a3b8",          # Light Slate
+    ("System & Admin", "General"): "#334155",
+
+    # Uncategorized (Neutral Slate)
+    ("Uncategorized", "General Activity"): "#94a3b8",
+    ("Uncategorized", "General"): "#94a3b8",
+}
+
 # General-purpose applications (browsers, terminals, runners) that host arbitrary content
 # and must NOT be bound to specific categories to prevent polluting native regex rules.
 GENERIC_HOST_APPS: Set[str] = {
@@ -132,15 +206,15 @@ GENERIC_DOMAINS: Set[str] = {
 # Baseline regex keywords for each subcategory matching DEFAULT_TAXONOMY
 SUBCATEGORY_SEEDS: Dict[str, Dict[str, str]] = {
     "Development": {
-        "Coding & IDE": r"\b(nvim|neovim|vim|gvim|code|vscode|vscodium|zed|sublime|sublime_text|pycharm|intellij|webstorm|clion|emacs|helix|0\.0\.0\.0|127\.0\.0\.1|localhost|activitywatch classifier|claude\.ai|claude|chatgpt|aistudio|antigravity)\b",
+        "Coding & IDE": r"\b(nvim|neovim|vim|gvim|code|vscode|vscodium|zed|sublime|sublime_text|pycharm|intellij|webstorm|clion|emacs|helix|0\.0\.0\.0|127\.0\.0\.1|localhost|activitywatch classifier|claude\.ai|claude|chatgpt|chatgpt\.com|chat\.openai\.com|platform\.openai\.com|aistudio|aistudio\.google\.com|gemini\.google\.com|antigravity|cursor|copilot|jupyter|colab|replit|v0\.dev|bolt\.new)\b",
         "DevOps & Terminal": r"\b(foot|kitty|alacritty|ptyxis|gnome-terminal|konsole|xterm|termux|bash|zsh|fish|tmux|screen|docker|podman|kubectl|ssh|ansible|terraform|django|scraper|your-server\.de)\b",
-        "Git & Code Review": r"\b(git|github|gitlab|bitbucket|lazygit|gitkraken|sourcetree|pull request|commit)\b",
-        "Documentation & API": r"\b(docs|api|swagger|postman|insomnia|devdocs|manpage)\b",
+        "Git & Code Review": r"\b(git|github|github\.com|gitlab|gitlab\.com|bitbucket|bitbucket\.org|lazygit|gitkraken|sourcetree|pull request|commit|merge request|diff)\b",
+        "Documentation & API": r"\b(docs|api|swagger|postman|insomnia|devdocs|devdocs\.io|readthedocs|readthedocs\.io|developer\.mozilla\.org|mdn|manpage)\b",
         "Debugging & Testing": r"\b(gdb|valgrind|cargo test|pytest|unittest|profiler|debugger|inspect)\b",
     },
     "Communication": {
         "Team Chat": r"\b(slack|discord|element|mattermost|zulip|teams|microsoft teams|telegram|org\.telegram\.desktop|whatsapp|signal|org\.signal\.signal)\b",
-        "Email": r"\b(thunderbird|evolution|org\.gnome\.evolution|gmail|proton|protonmail|kmail|mutt|neomutt|alpine|outlook|mailbox\.org|app\.mailbox\.org|fastmail|webmail|roundcube|tutanota|yahoo mail|mail|fairemail)\b",
+        "Email": r"\b(thunderbird|evolution|org\.gnome\.evolution|gmail|mail\.google\.com|proton|proton\.me|mail\.proton\.me|protonmail|kmail|mutt|neomutt|alpine|outlook|outlook\.live\.com|outlook\.office\.com|mailbox\.org|app\.mailbox\.org|fastmail|webmail|roundcube|tutanota|tuta\.com|yahoo mail|mail|fairemail)\b",
         "Calls & Meetings": r"\b(zoom|meet|google meet|webex|jitsi|bluejeans|call|huddle)\b",
     },
     "Education & Learning": {
@@ -163,24 +237,24 @@ SUBCATEGORY_SEEDS: Dict[str, Dict[str, str]] = {
         "Health Trackers": r"\b(garmin|garmin connect|fitbit|withings|apple health|google fit|whoop|polar)\b",
     },
     "Browsing & Research": {
-        "Search & Exploration": r"\b(google search|duckduckgo|bing search|brave search|kagi|searx|search)\b",
-        "Technical Articles & Papers": r"\b(stackoverflow|stackexchange|github\.com|gitlab\.com|readthedocs|developer\.mozilla|python\.org|pkg\.go\.dev|crates\.io|huggingface|arxiv|artificialanalysis)\b",
+        "Search & Exploration": r"\b(google search|duckduckgo|duckduckgo\.com|bing search|bing\.com|brave search|search\.brave\.com|kagi|kagi\.com|searx|search)\b",
+        "Technical Articles & Papers": r"\b(stackoverflow|stackoverflow\.com|stackexchange|stackexchange\.com|readthedocs|developer\.mozilla|python\.org|pkg\.go\.dev|crates\.io|huggingface|huggingface\.co|arxiv|arxiv\.org|artificialanalysis|medium\.com|substack\.com)\b",
         "Shopping & E-Commerce": r"\b(amazon|ebay|aliexpress|shopify|cart|checkout|trumf|bergfreunde\.no)\b",
     },
     "Productivity & Planning": {
-        "Notes & Knowledge Base": r"\b(obsidian|notion|confluence|evernote|logseq|joplin|onenote|wiki)\b",
-        "Task & Project Management": r"\b(jira|trello|asana|linear|todoist|ticktick|omnifocus|kanban|unum|deel)\b",
-        "Docs & Spreadsheets": r"\b(libreoffice|google docs|google sheets|calibre|evince|okular|excel|word|calc|drive|sheets)\b",
+        "Notes & Knowledge Base": r"\b(obsidian|notion|notion\.so|confluence|evernote|logseq|joplin|onenote|wiki|craft\.do|roamresearch)\b",
+        "Task & Project Management": r"\b(jira|atlassian\.net|trello|trello\.com|asana|asana\.com|linear|linear\.app|todoist|todoist\.com|ticktick|omnifocus|kanban|unum|deel)\b",
+        "Docs & Spreadsheets": r"\b(libreoffice|google docs|docs\.google\.com|google sheets|sheets\.google\.com|google slides|slides\.google\.com|drive\.google\.com|calibre|evince|okular|excel|word|calc|drive|sheets)\b",
     },
     "Media & Entertainment": {
-        "Video & Streaming": r"\b(youtube|twitch|netflix|plex|jellyfin|vlc|mpv|kodi|prime video|disney\+|bilibili)\b",
-        "Music & Audio": r"\b(spotify|youtube music|soundcloud|tidal|deezer|rhythmbox|audacious|podcast|simpmusic|odyssey)\b",
+        "Video & Streaming": r"\b(youtube|youtube\.com|youtu\.be|twitch|twitch\.tv|netflix|netflix\.com|plex|jellyfin|vlc|mpv|kodi|prime video|primevideo\.com|disney\+|disneyplus\.com|bilibili|vimeo|dailymotion)\b",
+        "Music & Audio": r"\b(spotify|spotify\.com|youtube music|music\.youtube\.com|soundcloud|soundcloud\.com|tidal|tidal\.com|deezer|deezer\.com|bandcamp|bandcamp\.com|rhythmbox|audacious|podcast|simpmusic|odyssey)\b",
         "Gaming": r"\b(steam|lutris|heroic|retroarch|minecraft|steamwebhelper|game|sudoku|chess|lichess|puzzle)\b",
     },
     "Social Media": {
-        "X / Twitter": r"\b(home / x|twitter|twitter\.com|x\.com)\b|\bon X:|\/ X\b",
-        "Reddit & Communities": r"\b(reddit|reddit\.com|lemmy|hacker news|lobste\.rs|forum)\b|:\s*r\/[a-zA-Z0-9_]+|\br\/[a-zA-Z0-9_]+\b",
-        "LinkedIn & Professional": r"\b(linkedin)\b",
+        "X / Twitter": r"\b(home / x|twitter|twitter\.com|x\.com|t\.co|nitter)\b|\bon X:|\/ X\b",
+        "Reddit & Communities": r"\b(reddit|reddit\.com|old\.reddit\.com|lemmy|hacker news|news\.ycombinator\.com|lobste\.rs|forum)\b|:\s*r\/[a-zA-Z0-9_]+|\br\/[a-zA-Z0-9_]+\b",
+        "LinkedIn & Professional": r"\b(linkedin|linkedin\.com)\b",
     },
     "System & Admin": {
         "OS & Desktop Settings": r"\b(gnome-control-center|systemsettings|systemsettings5|pavucontrol|gparted|control center|system launcher|digital wellbeing|shelter|bitwarden|tailscale|remmina|org\.remmina\.remmina|syncthing-fork|kde connect|com\.android\.settings|org\.gnome\.settings|org\.gnome\.extensions)\b",
@@ -302,6 +376,7 @@ def build_activitywatch_classes(
             if extra_keywords:
                 patterns.append(r"\b(" + "|".join(sorted(extra_keywords)) + r")\b")
 
+            sub_color = SUBCATEGORY_COLORS.get((cat, sub), color)
             if patterns:
                 combined_regex = "|".join(patterns)
                 classes.append({
@@ -312,7 +387,7 @@ def build_activitywatch_classes(
                         "regex": combined_regex,
                         "ignore_case": True,
                     },
-                    "data": {"color": color},
+                    "data": {"color": sub_color},
                 })
                 cat_regex_parts.append(combined_regex)
             else:
@@ -320,21 +395,13 @@ def build_activitywatch_classes(
                     "id": sub_id,
                     "name": [cat, sub],
                     "rule": {"type": "none"},
-                    "data": {"color": color},
+                    "data": {"color": sub_color},
                 })
 
         # 2. Add root category class
         root_id = class_id
         class_id += 1
         root_regex = "|".join(cat_regex_parts) if cat_regex_parts else ""
-
-        # For Browsing & Research, add generic browser app regex at the root level (depth 1).
-        # In ActivityWatch, deeper child classes (depth 2, e.g. YouTube, GitHub, Duolingo, Gmail)
-        # take precedence over parent classes. So specific URL rules win, and only general browsing
-        # falls back to the parent Browsing & Research class.
-        if cat == "Browsing & Research":
-            browser_fallback = r"\b(firefox|chrome|google-chrome|brave|brave-browser|chromium|microsoft-edge|edge|opera|vivaldi|zen|zen-browser|safari|epiphany|browser)\b"
-            root_regex = f"{browser_fallback}|{root_regex}" if root_regex else browser_fallback
 
         classes.append({
             "id": root_id,

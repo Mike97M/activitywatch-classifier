@@ -358,6 +358,9 @@ class AWClient:
             if not d.get("title"):
                 d["title"] = orig_title
 
+            if "category" in d and "$category" not in d:
+                d["$category"] = [d.get("category", "Uncategorized"), d.get("subcategory", "General Activity")]
+
             # Bridge ActivityWatch's native architecture limitation: ActivityWatch native Category Tree
             # only categorizes window titles from aw-watcher-window. When a browser event carries a URL,
             # append the domain tag so native regex rules matching domains/URLs match directly.

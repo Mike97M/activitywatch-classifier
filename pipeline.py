@@ -457,6 +457,7 @@ class ClassificationPipeline:
             cloned_data["subcategory"] = rec["chosen_subcategory"]
             cloned_data["full_category"] = full
             cloned_data["category_hierarchy"] = [cat, rec["chosen_subcategory"]]
+            cloned_data["$category"] = [cat, rec["chosen_subcategory"]]
             cloned_data["confidence"] = round(rec["chosen_confidence"], 4)
             cloned_data["classified_by"] = rec["classified_by"]
             cloned_data["reasoning"] = rec["reasoning"]

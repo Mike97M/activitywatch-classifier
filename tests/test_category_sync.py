@@ -21,7 +21,10 @@ def test_build_activitywatch_classes_structure():
     assert devops_class["rule"]["type"] == "regex"
     assert "foot" in devops_class["rule"]["regex"]
     assert devops_class["rule"]["ignore_case"] is True
-    assert devops_class["data"]["color"] == "#4DBA87"
+    # Verify distinct subcategory color
+    assert devops_class["data"]["color"] == "#06b6d4"
+    root_dev = next(c for c in classes if c["name"] == ["Development"])
+    assert root_dev["data"]["color"] == "#4DBA87"
 
 
 def test_build_activitywatch_classes_with_training_samples():
@@ -100,17 +103,35 @@ def test_education_category_and_duolingo():
     assert "duolingo" not in gaming_class["rule"]["regex"]
 
 
-def test_browser_parent_level_precedence():
+def test_browser_apps_not_bound_to_browsing():
+    """Verify generic browsers are not locked into Browsing so they dynamically reflect active tabs."""
     classes = build_activitywatch_classes()
-    # Plain browser pattern must be on the root ["Browsing & Research"] class (depth 1)
-    # and NOT inside specific child URL categories like ["Browsing & Research", "Search & Exploration"]
     root_browsing = next(c for c in classes if c["name"] == ["Browsing & Research"])
-    assert "firefox" in root_browsing["rule"]["regex"]
-    assert "chrome" in root_browsing["rule"]["regex"]
+    root_regex = root_browsing["rule"].get("regex", "")
+    assert "firefox" not in root_regex
+    assert "chrome" not in root_regex
+    assert "brave-browser" not in root_regex
+    assert "|brave|" not in f"|{root_regex}|"
 
-    # Subcategory classes (depth 2) have specific rules that take precedence in ActivityWatch
+    # Subcategory classes (depth 2) have specific search/article rules
     sub_search = next(c for c in classes if c["name"] == ["Browsing & Research", "Search & Exploration"])
     assert "firefox" not in sub_search["rule"]["regex"]
+    assert "duckduckgo" in sub_search["rule"]["regex"]
+
+
+def test_subcategory_distinct_colors():
+    """Verify subcategories receive distinct, identifiable color shades."""
+    classes = build_activitywatch_classes()
+    coding = next(c for c in classes if c["name"] == ["Development", "Coding & IDE"])
+    devops = next(c for c in classes if c["name"] == ["Development", "DevOps & Terminal"])
+    git = next(c for c in classes if c["name"] == ["Development", "Git & Code Review"])
+
+    # Colors must be different across subcategories
+    assert coding["data"]["color"] != devops["data"]["color"]
+    assert devops["data"]["color"] != git["data"]["color"]
+    assert coding["data"]["color"] == "#10b981"
+    assert devops["data"]["color"] == "#06b6d4"
+    assert git["data"]["color"] == "#34d399"
 
 
 def test_finance_taxonomy_structure():
