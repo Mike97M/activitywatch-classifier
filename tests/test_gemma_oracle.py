@@ -1,6 +1,9 @@
 """Unit tests for the GemmaOracle."""
 
-from gemma_oracle import GemmaOracle
+import math
+
+from config import LLM_DEFAULT_CONFIDENCE
+from gemma_oracle import GemmaOracle, label_confidence_from_logprobs
 
 
 def test_gemma_heuristic_classification():
@@ -38,7 +41,8 @@ def test_gemma_json_parser():
     assert parsed["category"] == "Development"
     assert parsed["subcategory"] == "Coding & IDE"
     assert parsed["full_category"] == "Development > Coding & IDE"
-    assert parsed["confidence"] == 0.98
+    # Self-reported confidence is ignored (models just echo the prompt example)
+    assert parsed["confidence"] == LLM_DEFAULT_CONFIDENCE
 
     # Case-insensitive category match
     alt_json = '{"category": "communication", "subcategory": "team chat", "confidence": 0.91, "reasoning": "chat client"}'
@@ -89,3 +93,24 @@ def test_terminal_emulator_heuristics():
     res_btop = oracle.classify_activity(app="foot", title="btop", url="")
     assert res_btop["category"] == "System & Admin"
     assert res_btop["subcategory"] == "Hardware & System Monitor"
+
+
+def test_label_confidence_from_logprobs_uses_only_label_values():
+    tokens = [
+        {"token": '{"category": "', "logprob": -5.0},  # scaffolding: ignored
+        {"token": "Develop", "logprob": math.log(0.8)},
+        {"token": "ment", "logprob": 0.0},
+        {"token": '", "subcategory": "', "logprob": -5.0},
+        {"token": "Coding & IDE", "logprob": math.log(0.5)},
+        {"token": '"}', "logprob": -5.0},
+    ]
+    assert abs(label_confidence_from_logprobs(tokens) - 0.4) < 1e-9
+    assert label_confidence_from_logprobs(None) is None
+    assert label_confidence_from_logprobs([{"token": "garbage", "logprob": 0.0}]) is None
+
+
+def test_grammar_has_no_confidence_field():
+    oracle = GemmaOracle(backend="heuristic")
+    tax = {"Development": ["Coding & IDE"]}
+    assert "confidence" not in oracle._build_grammar(tax)
+    assert "confidence" not in oracle._build_grammar(tax, batch=True)

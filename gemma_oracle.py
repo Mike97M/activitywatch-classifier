@@ -2,6 +2,7 @@
 
 import json
 import logging
+import math
 import os
 import re
 from pathlib import Path
@@ -16,6 +17,7 @@ from config import (
     DEFAULT_TAXONOMY,
     GEMINI_API_KEY,
     LIGHT_LOCAL_GGUF_NAME,
+    LLM_DEFAULT_CONFIDENCE,
     LOCAL_GGUF_PATH,
     MODELS_DIR,
     OLLAMA_HOST,
@@ -27,6 +29,33 @@ from config import (
 from app_knowledge import app_knowledge
 
 logger = logging.getLogger("gemma_oracle")
+
+# Backend tag on every heuristic result (explicit backend or fallback after an LLM failure).
+# Its confidence is hard-coded, so the pipeline never learns from it.
+HEURISTIC_BACKEND = "gemma_heuristic_proxy"
+
+
+def label_confidence_from_logprobs(tokens: Optional[List[Dict[str, Any]]]) -> Optional[float]:
+    """P(category value) * P(subcategory value) from OpenAI-style token logprobs.
+
+    Only tokens overlapping the two JSON string values count; the JSON scaffolding is forced
+    by the grammar and says nothing about how sure the model is. None if unavailable.
+    """
+    if not tokens:
+        return None
+    text, spans = "", []
+    for t in tokens:
+        tok = t.get("token", "")
+        spans.append((len(text), len(text) + len(tok), float(t.get("logprob", 0.0))))
+        text += tok
+    total = 0.0
+    for key in ("category", "subcategory"):
+        m = re.search(rf'"{key}"\s*:\s*"([^"]*)"', text)
+        if not m:
+            return None
+        start, end = m.span(1)
+        total += sum(lp for a, b, lp in spans if a < end and b > start)
+    return math.exp(total)
 
 
 def download_gemma_weights(
@@ -471,7 +500,7 @@ class GemmaOracle:
             f"- Website Domain: {parsed_domain or 'none'}\n"
             f"- URL / Link: {url or 'none'}\n\n"
             f"Respond with ONLY a valid JSON object in this exact schema, with no markdown fences and no extra fields:\n"
-            f'{{"category": "<Category>", "subcategory": "<Subcategory>", "confidence": 0.95}}'
+            f'{{"category": "<Category>", "subcategory": "<Subcategory>"}}'
         )
 
     def _build_batch_prompt(
@@ -525,7 +554,7 @@ class GemmaOracle:
             f"{activities_formatted}\n\n"
             f"Respond with ONLY a valid JSON array of objects, one for each activity in the exact same order, with no extra fields:\n"
             f'[\n'
-            f'  {{"id": <ID>, "category": "<Category>", "subcategory": "<Subcategory>", "confidence": 0.95}}\n'
+            f'  {{"id": <ID>, "category": "<Category>", "subcategory": "<Subcategory>"}}\n'
             f']'
         )
 
@@ -545,7 +574,6 @@ class GemmaOracle:
         """
         q_cat = self._gbnf_string("category")
         q_sub = self._gbnf_string("subcategory")
-        q_conf = self._gbnf_string("confidence")
         q_id = self._gbnf_string("id")
 
         pairs = []
@@ -560,7 +588,6 @@ class GemmaOracle:
 
         rules = [
             'ws ::= [ \\t\\n]*',
-            'num ::= [0-9]+ ("." [0-9]+)?',
             "pair ::= " + " | ".join(f"pair{i}" for i in range(len(pairs))),
         ]
         rules.extend(f"pair{i} ::= {pair}" for i, pair in enumerate(pairs))
@@ -568,11 +595,10 @@ class GemmaOracle:
         if batch:
             rules.append('root ::= "[" ws (item (ws "," ws item)*)? ws "]"')
             rules.append(
-                f'item ::= "{{" ws {q_id} ws ":" ws [0-9]+ ws "," ws pair '
-                f'ws "," ws {q_conf} ws ":" ws num ws "}}"'
+                f'item ::= "{{" ws {q_id} ws ":" ws [0-9]+ ws "," ws pair ws "}}"'
             )
         else:
-            rules.append(f'root ::= "{{" ws pair ws "," ws {q_conf} ws ":" ws num ws "}}"')
+            rules.append('root ::= "{" ws pair ws "}"')
 
         return "\n".join(rules)
 
@@ -626,7 +652,7 @@ class GemmaOracle:
                 "category": matched_cat,
                 "subcategory": matched_sub,
                 "full_category": full_cat,
-                "confidence": float(data.get("confidence", 0.95)),
+                "confidence": LLM_DEFAULT_CONFIDENCE,
                 "reasoning": data.get("reasoning", "Classified by Gemma E2B"),
                 "backend": self.backend,
             }
@@ -684,7 +710,7 @@ class GemmaOracle:
                     "category": matched_cat,
                     "subcategory": matched_sub,
                     "full_category": f"{matched_cat} > {matched_sub}",
-                    "confidence": float(item.get("confidence", 0.95)),
+                    "confidence": LLM_DEFAULT_CONFIDENCE,
                     "reasoning": item.get("reasoning", "Classified by Gemma E2B"),
                     "backend": self.backend,
                 })
@@ -804,6 +830,7 @@ class GemmaOracle:
                 "messages": [{"role": "user", "content": prompt}],
                 "temperature": 0.1,
                 "max_tokens": 48,
+                "logprobs": True,
             }
             if self.backend in ("llama_server", "llama-server"):
                 # llama-server accepts GBNF directly; this also avoids its json_schema
@@ -819,6 +846,11 @@ class GemmaOracle:
                 content = (msg.get("content") or msg.get("reasoning_content") or "").strip()
                 parsed = self._parse_llm_json(content, taxonomy)
                 if parsed:
+                    conf = label_confidence_from_logprobs(
+                        (data["choices"][0].get("logprobs") or {}).get("content")
+                    )
+                    if conf is not None:
+                        parsed["confidence"] = round(conf, 4)
                     return parsed
         except Exception as e:
             logger.error(f"OpenAI-compatible call failed: {e}")
@@ -874,7 +906,7 @@ class GemmaOracle:
                 "full_category": f"{cat} > {picked_sub}",
                 "confidence": 0.98,
                 "reasoning": f"Identified application '{app_clean}' from application knowledge base",
-                "backend": "gemma_heuristic_proxy",
+                "backend": HEURISTIC_BACKEND,
             }
 
         # -1. Blank or New Browser Tab
@@ -890,7 +922,7 @@ class GemmaOracle:
                 "full_category": f"Uncategorized > {sub}",
                 "confidence": 0.95,
                 "reasoning": "Blank new browser tab or empty page",
-                "backend": "gemma_heuristic_proxy",
+                "backend": HEURISTIC_BACKEND,
             }
 
         # 0. Terminal Emulators & Command-line Shells
@@ -915,7 +947,7 @@ class GemmaOracle:
                 "full_category": f"{category} > {subcategory}",
                 "confidence": 0.96,
                 "reasoning": reason,
-                "backend": "gemma_heuristic_proxy",
+                "backend": HEURISTIC_BACKEND,
             }
 
         # 0.5. Local Development Servers, Localhost & ActivityWatch
@@ -943,7 +975,7 @@ class GemmaOracle:
                 "full_category": f"{category} > {subcategory}",
                 "confidence": 0.96,
                 "reasoning": reason,
-                "backend": "gemma_heuristic_proxy",
+                "backend": HEURISTIC_BACKEND,
             }
 
         # 0.6. Remote Server Dashboards, Scrapers & Infrastructure
@@ -957,7 +989,7 @@ class GemmaOracle:
                 "full_category": f"{category} > {subcategory}",
                 "confidence": 0.96,
                 "reasoning": reason,
-                "backend": "gemma_heuristic_proxy",
+                "backend": HEURISTIC_BACKEND,
             }
         elif "django site admin" in combined or "/admin" in url_clean:
             category = "Development"
@@ -969,7 +1001,7 @@ class GemmaOracle:
                 "full_category": f"{category} > {subcategory}",
                 "confidence": 0.96,
                 "reasoning": reason,
-                "backend": "gemma_heuristic_proxy",
+                "backend": HEURISTIC_BACKEND,
             }
 
         # 0.7. Code Hosting & Git Repositories
@@ -987,7 +1019,7 @@ class GemmaOracle:
                 "full_category": f"{category} > {subcategory}",
                 "confidence": 0.96,
                 "reasoning": reason,
-                "backend": "gemma_heuristic_proxy",
+                "backend": HEURISTIC_BACKEND,
             }
 
         # 0.8. AI Developer Tools & LLM Workspaces
@@ -1006,7 +1038,7 @@ class GemmaOracle:
                 "full_category": f"{category} > {subcategory}",
                 "confidence": 0.96,
                 "reasoning": reason,
-                "backend": "gemma_heuristic_proxy",
+                "backend": HEURISTIC_BACKEND,
             }
 
         # 0.9. Programming Docs & APIs
@@ -1024,7 +1056,7 @@ class GemmaOracle:
                 "full_category": f"{category} > {subcategory}",
                 "confidence": 0.96,
                 "reasoning": reason,
-                "backend": "gemma_heuristic_proxy",
+                "backend": HEURISTIC_BACKEND,
             }
 
         # 0.10. Web Scraping & Crawling Tools
@@ -1039,7 +1071,7 @@ class GemmaOracle:
                 "full_category": f"{category} > {subcategory}",
                 "confidence": 0.96,
                 "reasoning": reason,
-                "backend": "gemma_heuristic_proxy",
+                "backend": HEURISTIC_BACKEND,
             }
 
         # 1. Social Media
@@ -1172,5 +1204,5 @@ class GemmaOracle:
             "full_category": full_cat,
             "confidence": 0.96,
             "reasoning": reason,
-            "backend": "gemma_heuristic_proxy",
+            "backend": HEURISTIC_BACKEND,
         }

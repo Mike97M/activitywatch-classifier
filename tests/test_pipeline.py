@@ -424,3 +424,29 @@ def test_pipeline_target_deduplication_and_force_reclassify():
 
 
 
+
+
+def test_pipeline_does_not_learn_from_heuristic_fallback():
+    """An LLM outage falls back to the heuristic; those hard-coded labels must not be cached."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        mock_aw = MagicMock()
+        mock_aw.find_afk_bucket_for_source.return_value = None
+        mock_aw.get_events.return_value = [
+            {"timestamp": "2026-11-05T12:00:00Z", "duration": 60.0,
+             "data": {"app": "customtool", "title": "Quarterly planning board"}},
+        ]
+        mock_aw.insert_events.side_effect = lambda bucket_id, evs: evs
+
+        classifier = FastClassifier(
+            model_path=Path(tmpdir) / "model.joblib", training_data_path=Path(tmpdir) / "data.jsonl"
+        )
+        # Unreachable server -> every activity falls back to the heuristic
+        oracle = GemmaOracle(backend="openai_compatible", openai_url="http://127.0.0.1:9/v1")
+
+        stats = ClassificationPipeline(
+            aw_client=mock_aw, classifier=classifier, gemma_oracle=oracle, confidence_threshold=0.75
+        ).run(source_bucket_ids=["source_bucket_1"], target_bucket_id="t", limit_per_bucket=10)
+
+        assert stats["gemma_oracle_calls"] == 1
+        assert stats["new_training_samples_added"] == 0
+        assert classifier.training_samples == []

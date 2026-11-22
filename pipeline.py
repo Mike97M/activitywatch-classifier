@@ -22,7 +22,7 @@ from config import (
     TRAINING_DATA_PATH,
     split_category_path,
 )
-from gemma_oracle import GemmaOracle
+from gemma_oracle import HEURISTIC_BACKEND, GemmaOracle
 
 logger = logging.getLogger("pipeline")
 
@@ -476,15 +476,19 @@ class ClassificationPipeline:
                 cat = gemma_res.get("category", "Uncategorized")
                 sub = gemma_res.get("subcategory", "General Activity")
                 full = gemma_res.get("full_category", f"{cat} > {sub}")
-                conf = float(gemma_res.get("confidence", 0.95))
+                conf = float(gemma_res.get("confidence", 0.0))
                 backend_info = gemma_res.get("backend", "oracle")
                 by = f"gemma_e2b ({backend_info})"
                 reas = gemma_res.get("reasoning", "")
                 
                 feat_text = gemma_sig_features[sig]
-                # Collect training samples ONLY from confident Gemma Oracle results;
-                # a low-confidence guess must not become a permanent cached label.
-                if collect_training_data and conf >= LABEL_MIN_CONFIDENCE:
+                # Collect training samples ONLY from confident real LLM results; a low-confidence
+                # guess or a heuristic fallback (LLM down/timeout) must not become a permanent cached label.
+                if (
+                    collect_training_data
+                    and conf >= LABEL_MIN_CONFIDENCE
+                    and backend_info != HEURISTIC_BACKEND
+                ):
                     added = self.classifier.add_training_sample(
                         feature_text=feat_text,
                         category=cat,

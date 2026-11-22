@@ -121,6 +121,10 @@ DEFAULT_CONFIDENCE_THRESHOLD = float(os.environ.get("CONFIDENCE_THRESHOLD", "0.6
 # Teacher labels below this confidence are used for the current run but never cached/learned:
 # a low-confidence LLM guess must not become a permanent 1.0-confidence memory match.
 LABEL_MIN_CONFIDENCE = float(os.environ.get("LABEL_MIN_CONFIDENCE", "0.70"))
+# Confidence assigned to LLM labels from backends that return no token logprobs (ollama, gemini_api,
+# in-process local). The model's self-reported number is ignored: it just echoes the prompt example.
+# ponytail: fixed value, not calibrated; set below LABEL_MIN_CONFIDENCE to stop learning from those backends.
+LLM_DEFAULT_CONFIDENCE = float(os.environ.get("LLM_DEFAULT_CONFIDENCE", "0.80"))
 MODEL_PATH = MODELS_DIR / "fast_classifier.joblib"
 TRAINING_DATA_PATH = DATA_DIR / "training_data.jsonl"
 
