@@ -3,7 +3,6 @@
 import json
 import logging
 import math
-import os
 import re
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
@@ -23,8 +22,6 @@ from config import (
     OLLAMA_HOST,
     OPENAI_API_KEY,
     OPENAI_COMPATIBLE_URL,
-    flatten_taxonomy,
-    split_category_path,
 )
 from app_knowledge import app_knowledge
 
@@ -290,170 +287,6 @@ class GemmaOracle:
                 res["reasoning"] = f"{res.get('reasoning', '')} (Fallback from {self.backend})"
             results.append(res)
         return results
-
-    def classify_parallel_streams(
-        self,
-        activities: List[Dict[str, Any]],
-        taxonomy: Optional[Dict[str, List[str]]] = None,
-        max_streams: int = 8,
-    ) -> List[Dict[str, Any]]:
-        """Decode multiple sequences simultaneously using llama.cpp parallel sequences (1 memory pass across all streams)."""
-        if not activities:
-            return []
-
-        model_path = self.find_local_model_path()
-        tax = taxonomy or self.taxonomy
-        if not model_path:
-            return [
-                self._smart_heuristic_classify(
-                    a.get("app", ""), a.get("title", ""), a.get("url"), tax
-                )
-                for a in activities
-            ]
-
-        try:
-            from llama_cpp import Llama, _internals, llama_cpp
-            import numpy as np
-
-            if not self._llama_model:
-                logger.info(f"Loading local Gemma model in-process from: {model_path}...")
-                self._llama_model = Llama(
-                    model_path=str(model_path),
-                    n_ctx=4096,
-                    n_threads=4,
-                    verbose=False,
-                    flash_attn=True,
-                )
-                logger.info("Local Gemma model loaded successfully.")
-
-            vocab = llama_cpp.llama_model_get_vocab(self._llama_model._model.model)
-            n_vocab = llama_cpp.llama_vocab_n_tokens(vocab)
-            eos_token = llama_cpp.llama_vocab_eos(vocab)
-
-            chunk_size = min(max_streams, len(activities))
-            cparams = llama_cpp.llama_context_default_params()
-            cparams.n_ctx = 4096
-            cparams.n_batch = 1024
-            cparams.n_ubatch = 512
-            cparams.n_seq_max = chunk_size
-            cparams.flash_attn_type = 1
-            cparams.n_threads = 4
-            cparams.kv_unified = True
-
-            lctx = _internals.LlamaContext(model=self._llama_model._model, params=cparams, verbose=False)
-            batch = llama_cpp.llama_batch_init(2048, 0, 1)
-
-            results: List[Dict[str, Any]] = []
-
-            for chunk_start in range(0, len(activities), chunk_size):
-                chunk = activities[chunk_start : chunk_start + chunk_size]
-                prompts = [
-                    f"<start_of_turn>user\n{self._build_prompt(a.get('app', ''), a.get('title', ''), a.get('url'), tax)}<end_of_turn>\n<start_of_turn>model\n"
-                    for a in chunk
-                ]
-                tokenized = [self._llama_model.tokenize(p.encode("utf-8")) for p in prompts]
-
-                # Clear KV cache for new chunk
-                lctx.kv_cache_clear()
-
-                # Phase 1: Pack prompt tokens for all parallel streams into a single batch
-                idx = 0
-                stream_token_idx = {}
-                for seq_id, tokens in enumerate(tokenized):
-                    for pos, tok in enumerate(tokens):
-                        batch.token[idx] = tok
-                        batch.pos[idx] = pos
-                        batch.n_seq_id[idx] = 1
-                        batch.seq_id[idx][0] = seq_id
-                        is_last = (pos == len(tokens) - 1)
-                        batch.logits[idx] = 1 if is_last else 0
-                        if is_last:
-                            stream_token_idx[seq_id] = idx
-                        idx += 1
-                batch.n_tokens = idx
-
-                ret = llama_cpp.llama_decode(lctx.ctx, batch)
-                if ret != 0:
-                    logger.warning(f"llama_decode failed on prompt batch (code {ret}), falling back.")
-                    for a in chunk:
-                        results.append(
-                            self._smart_heuristic_classify(
-                                a.get("app", ""), a.get("title", ""), a.get("url"), tax
-                            )
-                        )
-                    continue
-
-                streams = {}
-                for seq_id in range(len(chunk)):
-                    out_idx = stream_token_idx[seq_id]
-                    logits_ptr = lctx.get_logits_ith(out_idx)
-                    logits = np.ctypeslib.as_array(logits_ptr, shape=(n_vocab,))
-                    next_tok = int(np.argmax(logits))
-                    is_done = next_tok in (eos_token, 1, 107)
-                    streams[seq_id] = {
-                        "pos": len(tokenized[seq_id]),
-                        "tokens": [next_tok] if not is_done else [],
-                        "done": is_done,
-                    }
-
-                # Phase 2: Parallel token generation across all active streams (1 memory pass per token step)
-                for step in range(80):
-                    active_seqs = [s for s, data in streams.items() if not data["done"]]
-                    if not active_seqs:
-                        break
-
-                    batch.n_tokens = len(active_seqs)
-                    for i, seq_id in enumerate(active_seqs):
-                        last_tok = streams[seq_id]["tokens"][-1] if streams[seq_id]["tokens"] else eos_token
-                        batch.token[i] = last_tok
-                        batch.pos[i] = streams[seq_id]["pos"]
-                        batch.n_seq_id[i] = 1
-                        batch.seq_id[i][0] = seq_id
-                        batch.logits[i] = 1
-                        streams[seq_id]["pos"] += 1
-
-                    ret = llama_cpp.llama_decode(lctx.ctx, batch)
-                    if ret != 0:
-                        break
-
-                    for i, seq_id in enumerate(active_seqs):
-                        logits_ptr = lctx.get_logits_ith(i)
-                        logits = np.ctypeslib.as_array(logits_ptr, shape=(n_vocab,))
-                        next_tok = int(np.argmax(logits))
-                        streams[seq_id]["tokens"].append(next_tok)
-                        tok_str = self._llama_model.detokenize([next_tok]).decode(
-                            "utf-8", errors="ignore"
-                        )
-                        if next_tok in (eos_token, 1, 107) or "}" in tok_str:
-                            streams[seq_id]["done"] = True
-
-                # Phase 3: Detokenize and parse outputs
-                for seq_id, act in enumerate(chunk):
-                    text = self._llama_model.detokenize(streams[seq_id]["tokens"]).decode(
-                        "utf-8", errors="ignore"
-                    )
-                    parsed = self._parse_llm_json(text, tax)
-                    if parsed:
-                        parsed["backend"] = f"local_gguf_parallel ({model_path.name})"
-                        results.append(parsed)
-                    else:
-                        h = self._smart_heuristic_classify(
-                            act.get("app", ""), act.get("title", ""), act.get("url"), tax
-                        )
-                        h["reasoning"] = f"{h.get('reasoning', '')} (Fallback from parallel stream parse)"
-                        results.append(h)
-
-            llama_cpp.llama_batch_free(batch)
-            lctx.close()
-            return results
-        except Exception as e:
-            logger.error(f"classify_parallel_streams failed: {e}. Falling back to heuristic.")
-            return [
-                self._smart_heuristic_classify(
-                    a.get("app", ""), a.get("title", ""), a.get("url"), tax
-                )
-                for a in activities
-            ]
 
     def _build_prompt(
         self,

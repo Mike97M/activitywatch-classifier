@@ -1,7 +1,6 @@
 """ActivityWatch Gemma Classifier CLI and Server Entry Point."""
 
 import argparse
-import sys
 import uvicorn
 from aw_client import AWClient
 from classifier import FastClassifier

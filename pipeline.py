@@ -1,10 +1,10 @@
 """Pipeline coordinating ActivityWatch buckets, AFK filtering, FastClassifier, and Gemma Oracle with hierarchical subcategories."""
 
+import bisect
 from datetime import timedelta
 import json
 import logging
-from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Set
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 from afk_filter import (
     filter_events_by_afk,
     parse_iso_timestamp,
@@ -15,16 +15,63 @@ from anonymizer import anonymizer
 from aw_client import AWClient
 from classifier import FastClassifier
 from config import (
+    DEFAULT_CLIENT_NAME,
     DEFAULT_CONFIDENCE_THRESHOLD,
     DEFAULT_TARGET_BUCKET_ID,
+    DEFAULT_TARGET_BUCKET_TYPE,
     LABEL_MIN_CONFIDENCE,
     PIPELINE_STATS_FILE,
-    TRAINING_DATA_PATH,
-    split_category_path,
 )
 from gemma_oracle import HEURISTIC_BACKEND, GemmaOracle
 
 logger = logging.getLogger("pipeline")
+
+_BROWSER_APP_HINTS = ("brave", "firefox", "chromium", "chrome", "edge", "opera", "vivaldi", "zen", "browser")
+_URL_MATCH_SLACK = timedelta(seconds=2)
+
+
+def attach_browser_urls(events: List[Dict[str, Any]], web_events: List[Dict[str, Any]]) -> None:
+    """Give browser window events without a URL the URL of the web-watcher tab active at that time.
+
+    A tab matches if it overlaps the window event or starts within 2s of it; the latest-starting
+    match wins. Web events are sorted once and searched with bisect instead of scanned per event.
+    ponytail: the backward scan is bounded by the longest web event, so one hours-long tab widens it.
+    """
+    parsed: List[Tuple[Any, Any, str]] = []
+    for wb_ev in web_events:
+        url = (wb_ev.get("data") or {}).get("url")
+        if not url:
+            continue
+        try:
+            st = parse_iso_timestamp(wb_ev["timestamp"])
+            parsed.append((st, st + timedelta(seconds=float(wb_ev.get("duration", 0.0))), url))
+        except Exception:
+            continue
+    if not parsed:
+        return
+    parsed.sort(key=lambda x: x[0])
+    starts = [p[0] for p in parsed]
+    lookback = max(max(et - st for st, et, _ in parsed), _URL_MATCH_SLACK)
+
+    for ev in events:
+        ev_data = ev.get("data", {})
+        if ev_data.get("url"):
+            continue
+        app = str(ev_data.get("app") or "").lower()
+        if not any(b in app for b in _BROWSER_APP_HINTS):
+            continue
+        try:
+            ev_st = parse_iso_timestamp(ev["timestamp"])
+            ev_et = ev_st + timedelta(seconds=float(ev.get("duration", 0.0)))
+        except Exception:
+            continue
+        j = bisect.bisect_left(starts, max(ev_et, ev_st + _URL_MATCH_SLACK)) - 1
+        while j >= 0 and starts[j] > ev_st - lookback:
+            wb_st, wb_et, url = parsed[j]
+            if max(ev_st, wb_st) < min(ev_et, wb_et) or abs(ev_st - wb_st) < _URL_MATCH_SLACK:
+                ev_data["url"] = url
+                break
+            j -= 1
 
 
 class ClassificationPipeline:
@@ -53,7 +100,7 @@ class ClassificationPipeline:
         self,
         source_bucket_ids: List[str],
         target_bucket_id: str = DEFAULT_TARGET_BUCKET_ID,
-        limit_per_bucket: int = 150,
+        limit_per_bucket: Optional[int] = None,
         time_range: Optional[str] = None,
         start_time: Optional[str] = None,
         end_time: Optional[str] = None,
@@ -81,14 +128,14 @@ class ClassificationPipeline:
             end_time=end_time,
         )
 
-        # If a time range was requested and limit was default 150, fetch all events in range (limit=0)
+        # No explicit limit: everything in a requested time range (0), else the latest 150 per bucket
         fetch_limit = limit_per_bucket
-        if (
-            start_iso
-            or end_iso
-            or (time_range and time_range.lower() in ("today", "24h", "last_day", "7d", "last_week", "30d", "last_month", "all"))
-        ) and limit_per_bucket == 150:
-            fetch_limit = 0
+        if fetch_limit is None:
+            has_range = bool(start_iso or end_iso) or (
+                (time_range or "").lower()
+                in ("today", "24h", "last_day", "7d", "last_week", "30d", "last_month", "all")
+            )
+            fetch_limit = 0 if has_range else 150
 
         # Step 1: Ensure target bucket exists
         if progress_callback:
@@ -99,8 +146,8 @@ class ClassificationPipeline:
             })
         self.aw_client.create_bucket(
             bucket_id=target_bucket_id,
-            bucket_type="app.classified.activities",
-            client_name="aw-gemma-classifier",
+            bucket_type=DEFAULT_TARGET_BUCKET_TYPE,
+            client_name=DEFAULT_CLIENT_NAME,
         )
 
         total_raw_events = 0
@@ -147,6 +194,8 @@ class ClassificationPipeline:
             raw_event_count = len(events)
             total_raw_events += raw_event_count
 
+            web_buckets = self.aw_client.find_web_buckets_for_source(source_id)
+
             # AFK Filtering: account for AFK bucket and only consider items when user wasn't AFK
             if filter_afk and events:
                 if progress_callback:
@@ -159,8 +208,9 @@ class ClassificationPipeline:
                 # If afk_bucket_id is provided, ensure it belongs to the same device/hostname,
                 # otherwise resolve strictly for this device to prevent phone events from being filtered by laptop AFK.
                 if afk_bucket_id and afk_bucket_id.lower() not in ("auto", "none", ""):
-                    source_info = self.aw_client.list_buckets().get(source_id, {})
-                    afk_info = self.aw_client.list_buckets().get(afk_bucket_id, {})
+                    all_buckets = self.aw_client.list_buckets()
+                    source_info = all_buckets.get(source_id, {})
+                    afk_info = all_buckets.get(afk_bucket_id, {})
                     s_host = source_info.get("hostname", "")
                     a_host = afk_info.get("hostname", "")
                     if s_host and a_host and s_host != a_host:
@@ -187,7 +237,6 @@ class ClassificationPipeline:
                         # Audible tab consideration: tabs playing audio (except background music) count as active
                         audible_candidate_events: List[Dict[str, Any]] = []
                         if include_audible:
-                            web_buckets = self.aw_client.find_web_buckets_for_source(source_id)
                             for wb in web_buckets:
                                 if wb not in web_events_cache:
                                     try:
@@ -228,7 +277,6 @@ class ClassificationPipeline:
 
             # Browser URL Enrichment: If source bucket is a window watcher, find corresponding
             # web buckets for the same device/hostname and associate active URLs with browser window events.
-            web_buckets = self.aw_client.find_web_buckets_for_source(source_id)
             all_source_web_events = []
             for wb in web_buckets:
                 if wb not in web_events_cache:
@@ -240,32 +288,7 @@ class ClassificationPipeline:
                 all_source_web_events.extend(web_events_cache[wb])
 
             if all_source_web_events and events:
-                parsed_web = []
-                for wb_ev in all_source_web_events:
-                    url_v = wb_ev.get("data", {}).get("url")
-                    if url_v:
-                        try:
-                            wb_st = parse_iso_timestamp(wb_ev["timestamp"])
-                            wb_et = wb_st + timedelta(seconds=float(wb_ev.get("duration", 0.0)))
-                            parsed_web.append((wb_st, wb_et, wb_ev))
-                        except Exception:
-                            pass
-
-                if parsed_web:
-                    for ev in events:
-                        ev_data = ev.get("data", {})
-                        if not ev_data.get("url"):
-                            ev_app = str(ev_data.get("app") or "").lower()
-                            if any(b in ev_app for b in ("brave", "firefox", "chromium", "chrome", "edge", "opera", "vivaldi", "zen", "browser")):
-                                try:
-                                    ev_st = parse_iso_timestamp(ev["timestamp"])
-                                    ev_et = ev_st + timedelta(seconds=float(ev.get("duration", 0.0)))
-                                    for wb_st, wb_et, wb_ev in parsed_web:
-                                        if max(ev_st, wb_st) < min(ev_et, wb_et) or abs((ev_st - wb_st).total_seconds()) < 2.0:
-                                            ev_data["url"] = wb_ev["data"]["url"]
-                                            break
-                                except Exception:
-                                    pass
+                attach_browser_urls(events, all_source_web_events)
 
             for event in events:
                 all_events_to_classify.append((source_id, event))

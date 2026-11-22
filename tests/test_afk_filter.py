@@ -387,3 +387,38 @@ def test_find_web_buckets_for_source(monkeypatch):
         "aw-watcher-android-web-synced-from-oneplus_12"
     ]
 
+
+
+def test_bucket_summary_is_incremental(monkeypatch):
+    client = AWClient(base_url="http://aw")
+    stored = [{"data": {"classified_by": "gemma_e2b (x)"}}, {"data": {"classified_by": "rules"}}]
+    calls = {"full": 0}
+
+    def fake_get_events(bucket_id, limit=100, start=None, end=None):
+        calls["full"] += 1
+        return list(stored)
+
+    class Resp:
+        status_code = 200
+        def __init__(self, v): self.v = v
+        def json(self): return self.v
+
+    def fake_request(method, path, **kw):
+        if path.endswith("/events/count"):
+            return Resp(len(stored))
+        stored.extend(kw["json"])  # POST events
+        return Resp([])
+
+    monkeypatch.setattr(client, "get_events", fake_get_events)
+    monkeypatch.setattr(client, "_request", fake_request)
+
+    s = client.get_bucket_summary("t")
+    assert (s["total_events"], s["gemma_oracle"], s["fast_classifier"]) == (2, 1, 1)
+    client.insert_events("t", [{"data": {"classified_by": "human_correction_memory"}}])
+    s = client.get_bucket_summary("t")
+    assert (s["total_events"], s["human_override"]) == (3, 1)
+    assert calls["full"] == 1  # no re-download after insert
+
+    stored.pop()  # changed outside the classifier -> count mismatch -> full refresh
+    assert client.get_bucket_summary("t")["total_events"] == 2
+    assert calls["full"] == 2

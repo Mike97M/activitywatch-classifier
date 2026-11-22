@@ -82,7 +82,7 @@ class SettingsUpdateRequest(BaseModel):
 class RunPipelineRequest(BaseModel):
     source_bucket_ids: List[str]
     target_bucket_id: str = DEFAULT_TARGET_BUCKET_ID
-    limit_per_bucket: int = 150
+    limit_per_bucket: Optional[int] = None  # None: all events in time range, else 150
     time_range: Optional[str] = None  # e.g. "today", "24h", "7d", "30d", "all", "count"
     start_time: Optional[str] = None  # ISO timestamp
     end_time: Optional[str] = None    # ISO timestamp
@@ -156,7 +156,7 @@ def get_status() -> Dict[str, Any]:
 def get_bucket_stats_api(bucket_id: Optional[str] = None) -> Dict[str, Any]:
     """Return classified activity summary for target bucket."""
     bid = bucket_id or DEFAULT_TARGET_BUCKET_ID
-    return aw_client.get_bucket_summary(bid, force_refresh=True)
+    return aw_client.get_bucket_summary(bid)
 
 
 @app.get("/api/tasks/active")

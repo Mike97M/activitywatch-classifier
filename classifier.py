@@ -22,7 +22,6 @@ from category_sync import (
     TERMINAL_APPS,
 )
 from config import (
-    DEFAULT_CATEGORIES,
     DEFAULT_TAXONOMY,
     MODEL_PATH,
     TRAINING_DATA_PATH,

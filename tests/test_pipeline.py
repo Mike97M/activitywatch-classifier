@@ -450,3 +450,24 @@ def test_pipeline_does_not_learn_from_heuristic_fallback():
         assert stats["gemma_oracle_calls"] == 1
         assert stats["new_training_samples_added"] == 0
         assert classifier.training_samples == []
+
+
+def test_attach_browser_urls_matches_overlapping_tab():
+    from pipeline import attach_browser_urls
+
+    web = [
+        {"timestamp": "2026-11-05T10:00:00Z", "duration": 60.0, "data": {"url": "https://a.example"}},
+        {"timestamp": "2026-11-05T10:01:00Z", "duration": 3600.0, "data": {"url": "https://long.example"}},
+        {"timestamp": "2026-11-05T12:00:00Z", "duration": 30.0, "data": {"url": "https://b.example"}},
+    ]
+    events = [
+        {"timestamp": "2026-11-05T10:00:10Z", "duration": 5.0, "data": {"app": "Firefox"}},
+        {"timestamp": "2026-11-05T10:30:00Z", "duration": 5.0, "data": {"app": "firefox"}},
+        {"timestamp": "2026-11-05T12:00:01Z", "duration": 0.0, "data": {"app": "brave"}},
+        {"timestamp": "2026-11-05T15:00:00Z", "duration": 5.0, "data": {"app": "firefox"}},
+        {"timestamp": "2026-11-05T10:00:10Z", "duration": 5.0, "data": {"app": "code"}},
+    ]
+    attach_browser_urls(events, web)
+    assert [e["data"].get("url") for e in events] == [
+        "https://a.example", "https://long.example", "https://b.example", None, None,
+    ]

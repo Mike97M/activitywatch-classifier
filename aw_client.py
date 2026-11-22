@@ -14,12 +14,16 @@ from config import (
 
 logger = logging.getLogger("aw_client")
 
+# One pipeline run asks for the bucket list several times per source bucket.
+_BUCKET_LIST_TTL = 5.0
+
 
 class AWClient:
     def __init__(self, base_url: Optional[str] = None):
         self.base_url = base_url
         self._headers = {"Host": "localhost:5600", "User-Agent": "aw-classifier/1.0"}
         self._bucket_summary_cache: Dict[str, Any] = {}
+        self._buckets_cache: Optional[Tuple[float, Dict[str, Dict[str, Any]]]] = None
         if not self.base_url:
             self.auto_detect_server()
 
@@ -65,9 +69,13 @@ class AWClient:
             raise RuntimeError(f"Failed to communicate with ActivityWatch at {self.base_url}: {e}")
 
     def list_buckets(self) -> Dict[str, Dict[str, Any]]:
-        """List all buckets in ActivityWatch."""
-        resp = self._request("GET", "/api/0/buckets")
-        return resp.json()
+        """List all buckets in ActivityWatch (cached for a few seconds; create/delete invalidate it)."""
+        now = time.monotonic()
+        if self._buckets_cache and now - self._buckets_cache[0] < _BUCKET_LIST_TTL:
+            return self._buckets_cache[1]
+        buckets = self._request("GET", "/api/0/buckets").json()
+        self._buckets_cache = (now, buckets)
+        return buckets
 
     def list_afk_buckets(self) -> Dict[str, Dict[str, Any]]:
         """Return all buckets associated with AFK status tracking."""
@@ -198,7 +206,8 @@ class AWClient:
             logger.info(f"Bucket '{bucket_id}' already exists.")
             return existing
 
-        resp = self._request("POST", f"/api/0/buckets/{bucket_id}", json=payload)
+        self._request("POST", f"/api/0/buckets/{bucket_id}", json=payload)
+        self._buckets_cache = None
         logger.info(f"Created new bucket: '{bucket_id}'")
         return {"id": bucket_id, "created": True, "details": payload}
 
@@ -239,8 +248,6 @@ class AWClient:
         """Insert events into the designated target bucket."""
         if not events:
             return []
-        if hasattr(self, "_bucket_summary_cache"):
-            self._bucket_summary_cache.pop(bucket_id, None)
         # Chunk insert in batches of 100 to avoid request entity too large errors
         chunk_size = 100
         inserted_results = []
@@ -249,14 +256,47 @@ class AWClient:
             resp = self._request("POST", f"/api/0/buckets/{bucket_id}/events", json=chunk)
             if resp.status_code in (200, 201):
                 inserted_results.extend(resp.json())
+            self._add_to_summary(bucket_id, chunk)
         return inserted_results
 
+    @staticmethod
+    def _summary_key(event: Dict[str, Any]) -> str:
+        data = event.get("data", {}) if isinstance(event, dict) else {}
+        by = str(data.get("classified_by", "")).lower()
+        if "human" in by or "override" in by:
+            return "human_override"
+        if "cache" in by:
+            return "cached_memory"
+        if "gemma" in by or "oracle" in by or "gemini" in by or "llm" in by:
+            return "gemma_oracle"
+        return "fast_classifier"
+
+    def _add_to_summary(self, bucket_id: str, events: List[Dict[str, Any]]) -> None:
+        summary = self._bucket_summary_cache.get(bucket_id)
+        if summary is None:
+            return
+        summary["total_events"] += len(events)
+        for e in events:
+            if (e.get("data") or {}).get("classified_by"):
+                summary[self._summary_key(e)] += 1
+
+    def count_events(self, bucket_id: str) -> int:
+        return int(self._request("GET", f"/api/0/buckets/{bucket_id}/events/count").json())
+
     def get_bucket_summary(self, bucket_id: str, force_refresh: bool = False) -> Dict[str, Any]:
-        """Summarize classified activities in target bucket: total, fast_classifier, gemma, cached, etc."""
-        now = time.time()
-        cache_entry = getattr(self, "_bucket_summary_cache", {}).get(bucket_id)
-        if not force_refresh and cache_entry and (now - cache_entry.get("time", 0) < 10.0):
-            return cache_entry["data"]
+        """Summarize classified activities in target bucket: total, fast_classifier, gemma, cached, etc.
+
+        The full bucket is downloaded once; afterwards inserts update the counts in memory and a
+        cheap /events/count call detects outside changes (e.g. events deleted in ActivityWatch).
+        """
+        cached = self._bucket_summary_cache.get(bucket_id)
+        if cached and not force_refresh:
+            try:
+                if self.count_events(bucket_id) == cached["total_events"]:
+                    return dict(cached)
+            except Exception as e:
+                logger.debug(f"Could not count events in '{bucket_id}': {e}")
+                return dict(cached)
 
         try:
             events = self.get_events(bucket_id, limit=-1)
@@ -264,43 +304,22 @@ class AWClient:
             logger.debug(f"Could not fetch events for summary of '{bucket_id}': {e}")
             events = []
 
-        fast_count = 0
-        gemma_count = 0
-        cached_count = 0
-        human_count = 0
-
-        for e in events:
-            data = e.get("data", {}) if isinstance(e, dict) else {}
-            by = str(data.get("classified_by", "")).lower()
-            if "human" in by or "override" in by:
-                human_count += 1
-            elif "cache" in by:
-                cached_count += 1
-            elif "gemma" in by or "oracle" in by or "gemini" in by or "llm" in by:
-                gemma_count += 1
-            elif "fast" in by:
-                fast_count += 1
-            elif by:
-                fast_count += 1
-
         summary = {
             "bucket_id": bucket_id,
-            "total_events": len(events),
-            "fast_classifier": fast_count,
-            "gemma_oracle": gemma_count,
-            "cached_memory": cached_count,
-            "human_override": human_count,
+            "total_events": 0,
+            "fast_classifier": 0,
+            "gemma_oracle": 0,
+            "cached_memory": 0,
+            "human_override": 0,
         }
-
-        if not hasattr(self, "_bucket_summary_cache"):
-            self._bucket_summary_cache = {}
-        self._bucket_summary_cache[bucket_id] = {"time": now, "data": summary}
-        return summary
+        self._bucket_summary_cache[bucket_id] = summary
+        self._add_to_summary(bucket_id, events)
+        return dict(summary)
 
     def delete_bucket(self, bucket_id: str, force: bool = False) -> bool:
         """Delete a bucket (useful for resetting the target bucket)."""
-        if hasattr(self, "_bucket_summary_cache"):
-            self._bucket_summary_cache.pop(bucket_id, None)
+        self._bucket_summary_cache.pop(bucket_id, None)
+        self._buckets_cache = None
         try:
             params = {"force": "1"} if force else {}
             resp = self._request("DELETE", f"/api/0/buckets/{bucket_id}", params=params)
@@ -468,14 +487,7 @@ class AWClient:
             self.insert_events(web_bucket, b_events)
             logger.info(f"Synchronized {len(b_events)} web events with URLs to '{web_bucket}'")
 
-        # 4. Clean up legacy unpartitioned bucket aw-watcher-web_{host} if present
-        legacy_web_bucket = f"aw-watcher-web_{host}"
-        try:
-            self.delete_bucket(legacy_web_bucket)
-        except Exception:
-            pass
-
-        # 5. Insert non-AFK span covering the events so ActivityWatch marks them active
+        # 4. Insert non-AFK span covering the events so ActivityWatch marks them active
         try:
             min_time = min(parse_iso_timestamp(e["timestamp"]) for e in events)
             max_time = max(
