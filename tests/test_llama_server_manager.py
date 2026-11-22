@@ -85,3 +85,34 @@ def test_prompt_cache_ram_is_capped():
     mgr = LlamaServerManager(cache_ram_mib=512)
     assert mgr.cache_ram_mib == 512
     assert LlamaServerManager().cache_ram_mib <= 2048  # never llama-server's 8 GiB default
+
+
+def test_backend_selection_and_gpu_flags(monkeypatch):
+    import llama_server_manager as lsm
+
+    monkeypatch.delenv("LLAMA_BACKEND", raising=False)
+    monkeypatch.setattr(lsm, "gpu_available", lambda: False)
+    assert lsm.use_vulkan() is False  # e.g. inside a VM without /dev/dri
+    monkeypatch.setattr(lsm, "gpu_available", lambda: True)
+    assert lsm.use_vulkan() is True
+    monkeypatch.setenv("LLAMA_BACKEND", "cpu")
+    assert lsm.use_vulkan() is False
+
+    mgr = LlamaServerManager(n_threads=8, n_threads_batch=12)
+    gpu_cmd = mgr.build_command(Path("llama-server"), Path("m.gguf"), vulkan=True)
+    cpu_cmd = mgr.build_command(Path("llama-server"), Path("m.gguf"), vulkan=False)
+    assert gpu_cmd[gpu_cmd.index("-ngl") + 1] == "99" and "-ngl" not in cpu_cmd
+    assert cpu_cmd[cpu_cmd.index("-t") + 1] == "8" and cpu_cmd[cpu_cmd.index("-tb") + 1] == "12"
+
+
+def test_external_server_url():
+    import pytest
+
+    mgr = LlamaServerManager(external_url="http://127.0.0.1:9/v1/")
+    assert mgr.base_url == "http://127.0.0.1:9/v1"
+    assert mgr.health_url == "http://127.0.0.1:9/health"
+    assert mgr.get_status()["backend"] == "external"
+    with pytest.raises(RuntimeError, match="not reachable"):
+        mgr.ensure_server(Path("unused.gguf"))  # never starts a local process for an external URL
+    mgr.stop()  # nothing to stop
+    assert mgr.process is None

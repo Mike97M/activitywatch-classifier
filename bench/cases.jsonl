@@ -1,0 +1,146 @@
+{"app": "code", "title": "classifier.py - aw-classifier - Visual Studio Code", "url": "", "expected": "Development > Coding & IDE"}
+{"app": "jetbrains-pycharm", "title": "backend – models.py", "url": "", "expected": "Development > Coding & IDE"}
+{"app": "zed", "title": "src/main.rs — tokio-demo", "url": "", "expected": "Development > Coding & IDE"}
+{"app": "firefox", "title": "python-sandbox - Replit — Mozilla Firefox", "url": "https://replit.com/@demo/python-sandbox", "expected": "Development > Coding & IDE"}
+{"app": "kitty", "title": "kubectl get pods -n staging", "url": "", "expected": "Development > DevOps & Terminal"}
+{"app": "wezterm", "title": "terraform plan", "url": "", "expected": "Development > DevOps & Terminal"}
+{"app": "konsole", "title": "ssh deploy@prod-web-01", "url": "", "expected": "Development > DevOps & Terminal"}
+{"app": "firefox", "title": "Node Exporter Full - Dashboards - Grafana", "url": "https://grafana.example.com/d/rYdddlPWk/node-exporter-full", "expected": "Development > DevOps & Terminal"}
+{"app": "firefox", "title": "Fix race in task manager · Pull Request #12 · acme/api", "url": "https://github.com/acme/api/pull/12", "expected": "Development > Git & Code Review"}
+{"app": "firefox", "title": "Add caching (!88) · Merge requests · acme / web · GitLab", "url": "https://gitlab.com/acme/web/-/merge_requests/88", "expected": "Development > Git & Code Review"}
+{"app": "lazygit", "title": "lazygit", "url": "", "expected": "Development > Git & Code Review"}
+{"app": "gitkraken", "title": "GitKraken - acme/api", "url": "", "expected": "Development > Git & Code Review"}
+{"app": "firefox", "title": "Developer Interface — Requests 2.32 documentation", "url": "https://requests.readthedocs.io/en/latest/api/", "expected": "Development > Documentation & API"}
+{"app": "brave", "title": "Array.prototype.map() - JavaScript | MDN", "url": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/map", "expected": "Development > Documentation & API"}
+{"app": "zeal", "title": "Zeal - Python 3 > pathlib", "url": "", "expected": "Development > Documentation & API"}
+{"app": "firefox", "title": "Swagger UI - Petstore API", "url": "https://petstore.swagger.io/", "expected": "Development > Documentation & API"}
+{"app": "postman", "title": "Postman - POST /api/v1/login (401 Unauthorized)", "url": "", "expected": "Development > Documentation & API"}
+{"app": "firefox", "title": "TypeError: Cannot read properties of undefined - acme-web - Sentry", "url": "https://acme.sentry.io/issues/4211/", "expected": "Development > Debugging & Testing"}
+{"app": "firefox", "title": "Test Results - api #512 - Jenkins", "url": "https://ci.example.com/job/api/512/testReport/", "expected": "Development > Debugging & Testing"}
+{"app": "firefox", "title": "Live Testing - BrowserStack", "url": "https://live.browserstack.com/dashboard", "expected": "Development > Debugging & Testing"}
+{"app": "kcachegrind", "title": "callgrind.out.4242 - KCachegrind", "url": "", "expected": "Development > Debugging & Testing"}
+{"app": "insomnia", "title": "Insomnia – GET /users (500)", "url": "", "expected": "Development > Documentation & API"}
+{"app": "slack", "title": "#backend - Acme - Slack", "url": "", "expected": "Communication > Team Chat"}
+{"app": "element", "title": "Element | #matrix-dev:matrix.org", "url": "", "expected": "Communication > Team Chat"}
+{"app": "teams", "title": "Chat | Backend Squad | Microsoft Teams", "url": "", "expected": "Communication > Team Chat"}
+{"app": "firefox", "title": "general | Acme Dev - Discord", "url": "https://discord.com/channels/123/456", "expected": "Communication > Team Chat"}
+{"app": "thunderbird", "title": "Inbox - Mozilla Thunderbird", "url": "", "expected": "Communication > Email"}
+{"app": "firefox", "title": "Inbox (3) - Gmail", "url": "https://mail.google.com/mail/u/0/#inbox", "expected": "Communication > Email"}
+{"app": "geary", "title": "Inbox — Geary", "url": "", "expected": "Communication > Email"}
+{"app": "firefox", "title": "Mail - Outlook", "url": "https://outlook.office.com/mail/", "expected": "Communication > Email"}
+{"app": "zoom", "title": "Zoom Meeting", "url": "", "expected": "Communication > Calls & Meetings"}
+{"app": "firefox", "title": "Meet - Weekly sync", "url": "https://meet.google.com/abc-defg-hij", "expected": "Communication > Calls & Meetings"}
+{"app": "teams", "title": "Meeting with Design | Microsoft Teams", "url": "", "expected": "Communication > Calls & Meetings"}
+{"app": "firefox", "title": "Jitsi Meet | acme-standup", "url": "https://meet.jit.si/acme-standup", "expected": "Communication > Calls & Meetings"}
+{"app": "firefox", "title": "Duolingo - The world's best way to learn a language", "url": "https://www.duolingo.com/learn", "expected": "Education & Learning > Language Learning"}
+{"app": "anki", "title": "Spanish Vocabulary - Anki", "url": "", "expected": "Education & Learning > Language Learning"}
+{"app": "firefox", "title": "Norwegian for beginners - Lesson 4 - Babbel", "url": "https://my.babbel.com/en/lesson-player/NOR", "expected": "Education & Learning > Language Learning"}
+{"app": "memrise", "title": "Memrise - Japanese 1", "url": "", "expected": "Education & Learning > Language Learning"}
+{"app": "firefox", "title": "Neural Networks and Deep Learning | Coursera", "url": "https://www.coursera.org/learn/neural-networks-deep-learning/lecture/1", "expected": "Education & Learning > Courses & Tutorials"}
+{"app": "firefox", "title": "Ownership and Borrowing | Rust Course | Udemy", "url": "https://www.udemy.com/course/rust-lang/learn/lecture/123", "expected": "Education & Learning > Courses & Tutorials"}
+{"app": "firefox", "title": "Vectors and spaces | Linear algebra | Khan Academy", "url": "https://www.khanacademy.org/math/linear-algebra/vectors-and-spaces", "expected": "Education & Learning > Courses & Tutorials"}
+{"app": "brave", "title": "Responsive Web Design Certification | freeCodeCamp.org", "url": "https://www.freecodecamp.org/learn/2022/responsive-web-design/", "expected": "Education & Learning > Courses & Tutorials"}
+{"app": "foliate", "title": "Designing Data-Intensive Applications - Foliate", "url": "", "expected": "Education & Learning > Reading & Reference"}
+{"app": "calibre", "title": "E-book viewer - The Pragmatic Programmer", "url": "", "expected": "Education & Learning > Reading & Reference"}
+{"app": "firefox", "title": "Photosynthesis - Wikipedia", "url": "https://en.wikipedia.org/wiki/Photosynthesis", "expected": "Education & Learning > Reading & Reference"}
+{"app": "firefox", "title": "Kindle Cloud Reader", "url": "https://read.amazon.com/", "expected": "Education & Learning > Reading & Reference"}
+{"app": "firefox", "title": "Accounts overview - Online banking", "url": "https://www.dnb.no/privat/nettbank", "expected": "Finance & Banking > Banking & Payments"}
+{"app": "revolut", "title": "Revolut - Transfers", "url": "", "expected": "Finance & Banking > Banking & Payments"}
+{"app": "firefox", "title": "PayPal: Summary", "url": "https://www.paypal.com/myaccount/summary", "expected": "Finance & Banking > Banking & Payments"}
+{"app": "firefox", "title": "Send money - Wise", "url": "https://wise.com/send", "expected": "Finance & Banking > Banking & Payments"}
+{"app": "firefox", "title": "AAPL 189.84 ▲ +1.2% Apple Inc - TradingView", "url": "https://www.tradingview.com/chart/xyz/", "expected": "Finance & Banking > Investments & Trading"}
+{"app": "firefox", "title": "Portfolio overview - Nordnet", "url": "https://www.nordnet.no/overview", "expected": "Finance & Banking > Investments & Trading"}
+{"app": "firefox", "title": "Bitcoin price - Coinbase", "url": "https://www.coinbase.com/price/bitcoin", "expected": "Finance & Banking > Investments & Trading"}
+{"app": "tws", "title": "Trader Workstation - Portfolio", "url": "", "expected": "Finance & Banking > Investments & Trading"}
+{"app": "firefox", "title": "Travel planner - Entur", "url": "https://entur.no/reiseplanlegger", "expected": "Travel & Navigation > Public Transit & Tickets"}
+{"app": "firefox", "title": "Berlin → München timetable | Deutsche Bahn", "url": "https://int.bahn.de/en/buchung/fahrplan/suche", "expected": "Travel & Navigation > Public Transit & Tickets"}
+{"app": "ruter", "title": "Ruter - Tickets", "url": "", "expected": "Travel & Navigation > Public Transit & Tickets"}
+{"app": "firefox", "title": "Trainline: Buy cheap train tickets", "url": "https://www.thetrainline.com/", "expected": "Travel & Navigation > Public Transit & Tickets"}
+{"app": "firefox", "title": "Oslo to Bergen - Google Maps", "url": "https://www.google.com/maps/dir/Oslo/Bergen", "expected": "Travel & Navigation > Maps & Rides"}
+{"app": "org.gnome.maps", "title": "Maps", "url": "", "expected": "Travel & Navigation > Maps & Rides"}
+{"app": "firefox", "title": "Uber - Request a ride", "url": "https://m.uber.com/go/home", "expected": "Travel & Navigation > Maps & Rides"}
+{"app": "firefox", "title": "OpenStreetMap", "url": "https://www.openstreetmap.org/#map=12/59.91/10.75", "expected": "Travel & Navigation > Maps & Rides"}
+{"app": "firefox", "title": "Charging - Tesla Account", "url": "https://www.tesla.com/teslaaccount/charging", "expected": "Travel & Navigation > Car & EV Utilities"}
+{"app": "abetterrouteplanner", "title": "A Better Routeplanner - Oslo to Trondheim", "url": "", "expected": "Travel & Navigation > Car & EV Utilities"}
+{"app": "firefox", "title": "PlugShare - EV Charging Station Map", "url": "https://www.plugshare.com/", "expected": "Travel & Navigation > Car & EV Utilities"}
+{"app": "firefox", "title": "Charging stations - Elton", "url": "https://www.elton.app/map", "expected": "Travel & Navigation > Car & EV Utilities"}
+{"app": "firefox", "title": "Booking.com: Hotels in Bergen", "url": "https://www.booking.com/searchresults.html?ss=Bergen", "expected": "Travel & Navigation > Lodging & Trips"}
+{"app": "firefox", "title": "Cabins in Lofoten - Airbnb", "url": "https://www.airbnb.com/s/Lofoten/homes", "expected": "Travel & Navigation > Lodging & Trips"}
+{"app": "firefox", "title": "Cheap flights from Oslo to Rome | Skyscanner", "url": "https://www.skyscanner.net/transport/flights/osl/rome/", "expected": "Travel & Navigation > Lodging & Trips"}
+{"app": "firefox", "title": "THE 15 BEST Things to Do in Rome - Tripadvisor", "url": "https://www.tripadvisor.com/Attractions-g187791", "expected": "Travel & Navigation > Lodging & Trips"}
+{"app": "firefox", "title": "Morning Run | Strava", "url": "https://www.strava.com/activities/123", "expected": "Health & Fitness > Workouts & Gym"}
+{"app": "hevy", "title": "Hevy - Push Day", "url": "", "expected": "Health & Fitness > Workouts & Gym"}
+{"app": "firefox", "title": "Book a class - SATS", "url": "https://www.sats.no/booking", "expected": "Health & Fitness > Workouts & Gym"}
+{"app": "fitbod", "title": "Fitbod - Today's Workout", "url": "", "expected": "Health & Fitness > Workouts & Gym"}
+{"app": "firefox", "title": "Sleep | Garmin Connect", "url": "https://connect.garmin.com/modern/sleep", "expected": "Health & Fitness > Health Trackers"}
+{"app": "gadgetbridge", "title": "Gadgetbridge - Sleep Monitor", "url": "", "expected": "Health & Fitness > Health Trackers"}
+{"app": "firefox", "title": "Readiness - Oura", "url": "https://cloud.ouraring.com/dashboard", "expected": "Health & Fitness > Health Trackers"}
+{"app": "firefox", "title": "Food Diary | MyFitnessPal", "url": "https://www.myfitnesspal.com/food/diary", "expected": "Health & Fitness > Health Trackers"}
+{"app": "firefox", "title": "best mechanical keyboard 2026 - Google Search", "url": "https://www.google.com/search?q=best+mechanical+keyboard+2026", "expected": "Browsing & Research > Search & Exploration"}
+{"app": "firefox", "title": "rust async traits at DuckDuckGo", "url": "https://duckduckgo.com/?q=rust+async+traits", "expected": "Browsing & Research > Search & Exploration"}
+{"app": "brave", "title": "linux kernel 6.12 changes - Brave Search", "url": "https://search.brave.com/search?q=linux+kernel+6.12+changes", "expected": "Browsing & Research > Search & Exploration"}
+{"app": "firefox", "title": "Startpage Search Results", "url": "https://www.startpage.com/do/search?q=weather+bergen", "expected": "Browsing & Research > Search & Exploration"}
+{"app": "firefox", "title": "Claude", "url": "https://claude.ai/chat/abc", "expected": "Browsing & Research > AI & Research"}
+{"app": "firefox", "title": "ChatGPT", "url": "https://chatgpt.com/c/123", "expected": "Browsing & Research > AI & Research"}
+{"app": "firefox", "title": "Perplexity", "url": "https://www.perplexity.ai/search/abc", "expected": "Browsing & Research > AI & Research"}
+{"app": "firefox", "title": "Google AI Studio", "url": "https://aistudio.google.com/prompts/new_chat", "expected": "Browsing & Research > AI & Research"}
+{"app": "firefox", "title": "[2401.12345] Scaling Laws for Small Language Models", "url": "https://arxiv.org/abs/2401.12345", "expected": "Browsing & Research > Technical Articles & Papers"}
+{"app": "firefox", "title": "Show HN: A tiny Rust database | Hacker News", "url": "https://news.ycombinator.com/item?id=4200", "expected": "Browsing & Research > Technical Articles & Papers"}
+{"app": "firefox", "title": "How we cut p99 latency by 40% | The Cloudflare Blog", "url": "https://blog.cloudflare.com/p99-latency/", "expected": "Browsing & Research > Technical Articles & Papers"}
+{"app": "firefox", "title": "LLM Leaderboard - Artificial Analysis", "url": "https://artificialanalysis.ai/leaderboards/models", "expected": "Browsing & Research > Technical Articles & Papers"}
+{"app": "firefox", "title": "Amazon.com : mechanical keyboard", "url": "https://www.amazon.com/s?k=mechanical+keyboard", "expected": "Browsing & Research > Shopping & E-Commerce"}
+{"app": "firefox", "title": "Handlekurv - Komplett.no", "url": "https://www.komplett.no/checkout/cart", "expected": "Browsing & Research > Shopping & E-Commerce"}
+{"app": "firefox", "title": "Lenovo ThinkPad X1 Carbon Gen 11 | eBay", "url": "https://www.ebay.com/itm/1234", "expected": "Browsing & Research > Shopping & E-Commerce"}
+{"app": "firefox", "title": "Desks - IKEA", "url": "https://www.ikea.com/no/en/cat/desks-20649/", "expected": "Browsing & Research > Shopping & E-Commerce"}
+{"app": "obsidian", "title": "Project ideas - vault - Obsidian v1.8", "url": "", "expected": "Productivity & Planning > Notes & Knowledge Base"}
+{"app": "logseq", "title": "Journals - Logseq", "url": "", "expected": "Productivity & Planning > Notes & Knowledge Base"}
+{"app": "firefox", "title": "Meeting notes | Notion", "url": "https://www.notion.so/acme/Meeting-notes-abc", "expected": "Productivity & Planning > Notes & Knowledge Base"}
+{"app": "joplin", "title": "Recipes - Joplin", "url": "", "expected": "Productivity & Planning > Notes & Knowledge Base"}
+{"app": "firefox", "title": "ENG-142 Fix login redirect - Linear", "url": "https://linear.app/acme/issue/ENG-142", "expected": "Productivity & Planning > Task & Project Management"}
+{"app": "firefox", "title": "[PROJ-77] Migrate to Postgres - Jira", "url": "https://acme.atlassian.net/browse/PROJ-77", "expected": "Productivity & Planning > Task & Project Management"}
+{"app": "firefox", "title": "Sprint board | Trello", "url": "https://trello.com/b/abc/sprint", "expected": "Productivity & Planning > Task & Project Management"}
+{"app": "todoist", "title": "Today – Todoist", "url": "", "expected": "Productivity & Planning > Task & Project Management"}
+{"app": "soffice.bin", "title": "budget_2026.ods - LibreOffice Calc", "url": "", "expected": "Productivity & Planning > Docs & Spreadsheets"}
+{"app": "firefox", "title": "Q3 report - Google Docs", "url": "https://docs.google.com/document/d/abc/edit", "expected": "Productivity & Planning > Docs & Spreadsheets"}
+{"app": "firefox", "title": "Expenses - Google Sheets", "url": "https://docs.google.com/spreadsheets/d/abc/edit", "expected": "Productivity & Planning > Docs & Spreadsheets"}
+{"app": "onlyoffice", "title": "proposal.docx - ONLYOFFICE", "url": "", "expected": "Productivity & Planning > Docs & Spreadsheets"}
+{"app": "firefox", "title": "How Transistors Work - YouTube", "url": "https://www.youtube.com/watch?v=abc", "expected": "Media & Entertainment > Video & Streaming"}
+{"app": "mpv", "title": "movie.mkv - mpv", "url": "", "expected": "Media & Entertainment > Video & Streaming"}
+{"app": "firefox", "title": "Netflix", "url": "https://www.netflix.com/watch/8123", "expected": "Media & Entertainment > Video & Streaming"}
+{"app": "firefox", "title": "somechannel - Twitch", "url": "https://www.twitch.tv/somechannel", "expected": "Media & Entertainment > Video & Streaming"}
+{"app": "spotify", "title": "Spotify Premium", "url": "", "expected": "Media & Entertainment > Music & Audio"}
+{"app": "firefox", "title": "YouTube Music", "url": "https://music.youtube.com/watch?v=abc", "expected": "Media & Entertainment > Music & Audio"}
+{"app": "rhythmbox", "title": "Kind of Blue - Rhythmbox", "url": "", "expected": "Media & Entertainment > Music & Audio"}
+{"app": "firefox", "title": "Episode 42 - Pocket Casts", "url": "https://play.pocketcasts.com/podcasts/abc", "expected": "Media & Entertainment > Music & Audio"}
+{"app": "steam", "title": "Steam", "url": "", "expected": "Media & Entertainment > Gaming"}
+{"app": "factorio", "title": "Factorio 2.0", "url": "", "expected": "Media & Entertainment > Gaming"}
+{"app": "lutris", "title": "Lutris", "url": "", "expected": "Media & Entertainment > Gaming"}
+{"app": "firefox", "title": "Play Chess Online - Chess.com", "url": "https://www.chess.com/play/online", "expected": "Media & Entertainment > Gaming"}
+{"app": "firefox", "title": "Home / X", "url": "https://x.com/home", "expected": "Social Media > X / Twitter"}
+{"app": "firefox", "title": "(3) Notifications / X", "url": "https://x.com/notifications", "expected": "Social Media > X / Twitter"}
+{"app": "brave", "title": "Explore / X", "url": "https://x.com/explore", "expected": "Social Media > X / Twitter"}
+{"app": "firefox", "title": "X Pro", "url": "https://pro.x.com/", "expected": "Social Media > X / Twitter"}
+{"app": "firefox", "title": "Linux, GNU/Linux, free software... : r/linux", "url": "https://www.reddit.com/r/linux/", "expected": "Social Media > Reddit & Communities"}
+{"app": "firefox", "title": "Technology - Lemmy.World", "url": "https://lemmy.world/c/technology", "expected": "Social Media > Reddit & Communities"}
+{"app": "firefox", "title": "Home - Mastodon", "url": "https://mastodon.social/home", "expected": "Social Media > Reddit & Communities"}
+{"app": "firefox", "title": "Async closures stabilized - The Rust Programming Language Forum", "url": "https://users.rust-lang.org/t/123", "expected": "Social Media > Reddit & Communities"}
+{"app": "firefox", "title": "Feed | LinkedIn", "url": "https://www.linkedin.com/feed/", "expected": "Social Media > LinkedIn & Professional"}
+{"app": "firefox", "title": "Jobs | LinkedIn", "url": "https://www.linkedin.com/jobs/", "expected": "Social Media > LinkedIn & Professional"}
+{"app": "firefox", "title": "Senior Rust Engineer - Remote | Indeed.com", "url": "https://www.indeed.com/viewjob?jk=abc", "expected": "Social Media > LinkedIn & Professional"}
+{"app": "firefox", "title": "Ledige stillinger - FINN jobb", "url": "https://www.finn.no/job/search", "expected": "Social Media > LinkedIn & Professional"}
+{"app": "gnome-control-center", "title": "Settings - Network", "url": "", "expected": "System & Admin > OS & Desktop Settings"}
+{"app": "systemsettings", "title": "Display Configuration — System Settings", "url": "", "expected": "System & Admin > OS & Desktop Settings"}
+{"app": "nm-connection-editor", "title": "Network Connections", "url": "", "expected": "System & Admin > OS & Desktop Settings"}
+{"app": "yast2", "title": "YaST2 - Control Center", "url": "", "expected": "System & Admin > OS & Desktop Settings"}
+{"app": "kitty", "title": "htop", "url": "", "expected": "System & Admin > Hardware & System Monitor"}
+{"app": "gnome-system-monitor", "title": "System Monitor", "url": "", "expected": "System & Admin > Hardware & System Monitor"}
+{"app": "firefox", "title": "ActivityWatch", "url": "http://localhost:5600/#/activity/host", "expected": "System & Admin > Hardware & System Monitor"}
+{"app": "psensor", "title": "Psensor - Temperature Monitor", "url": "", "expected": "System & Admin > Hardware & System Monitor"}
+{"app": "alacritty", "title": "sudo apt update && sudo apt upgrade", "url": "", "expected": "System & Admin > Package Management"}
+{"app": "gnome-software", "title": "Software - Updates", "url": "", "expected": "System & Admin > Package Management"}
+{"app": "discover", "title": "Updates — Discover", "url": "", "expected": "System & Admin > Package Management"}
+{"app": "foot", "title": "flatpak update", "url": "", "expected": "System & Admin > Package Management"}
+{"app": "firefox", "title": "New Tab", "url": "about:newtab", "expected": "Uncategorized > General Activity"}
+{"app": "firefox", "title": "about:blank", "url": "about:blank", "expected": "Uncategorized > General Activity"}
+{"app": "gnome-shell", "title": "Activities", "url": "", "expected": "Uncategorized > General Activity"}
+{"app": "unknownapp", "title": "Untitled", "url": "", "expected": "Uncategorized > General Activity"}

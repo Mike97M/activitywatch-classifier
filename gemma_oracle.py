@@ -184,7 +184,7 @@ class GemmaOracle:
             workers = min(workers, llama_server.n_parallel)
             try:
                 model_path = self.find_local_model_path()
-                if model_path:
+                if model_path or llama_server.external_url:
                     base_url = llama_server.ensure_server(model_path)
             except Exception as e:
                 logger.error(f"Failed to ensure llama-server: {e}")

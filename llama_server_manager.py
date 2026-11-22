@@ -26,12 +26,37 @@ DEFAULT_DOWNLOAD_URL = (
 # From the GitHub release asset digest; update together with DEFAULT_RELEASE_TAG.
 DEFAULT_DOWNLOAD_SHA256 = "4496c40c11710b520a745bd9845a47fc91c8d42077c4069130a075d08d4718f1"
 BIN_DIR = Path(__file__).resolve().parent / "bin" / "llama-cpp"
+# Vulkan build of the same release: runs the model on the GPU (Intel Arc / AMD / NVIDIA iGPU or dGPU).
+# On an Arc iGPU it read prompts ~4x faster than 12 CPU threads (benchmark: 1806 vs 426 tok/s).
+VULKAN_BIN_DIR = BIN_DIR.parent / "llama-cpp-vulkan"
+VULKAN_DOWNLOAD_URL = (
+    f"https://github.com/ggml-org/llama.cpp/releases/download/{DEFAULT_RELEASE_TAG}/"
+    f"llama-{DEFAULT_RELEASE_TAG}-bin-ubuntu-vulkan-x64.tar.gz"
+)
+VULKAN_DOWNLOAD_SHA256 = "a513b1808c81c60693897f5acac8d6b6b80e3c4cb8573c96ffbbfe872a412556"
 SERVER_BIN_NAME = "llama-server"
 DEFAULT_PORT = 8088
 
 
+def gpu_available() -> bool:
+    """True when the machine exposes a GPU render node (absent in VMs without GPU passthrough)."""
+    return any(Path("/dev/dri").glob("renderD*"))
+
+
+def use_vulkan() -> bool:
+    """LLAMA_BACKEND=vulkan|cpu forces a backend; the default 'auto' uses Vulkan when a GPU is present."""
+    choice = os.environ.get("LLAMA_BACKEND", "auto").lower()
+    if choice in ("vulkan", "cpu"):
+        return choice == "vulkan"
+    return gpu_available()
+
+
 def get_llama_server_binary() -> Optional[Path]:
-    """Find local llama-server binary if available."""
+    """Find local llama-server binary if available (the Vulkan build first when a GPU is used)."""
+    if use_vulkan():
+        vulkan_bin = VULKAN_BIN_DIR / SERVER_BIN_NAME
+        return vulkan_bin if vulkan_bin.is_file() and os.access(vulkan_bin, os.X_OK) else None
+
     # 1. Local bin/llama-cpp directory
     local_bin = BIN_DIR / SERVER_BIN_NAME
     if local_bin.is_file() and os.access(local_bin, os.X_OK):
@@ -150,14 +175,24 @@ class LlamaServerManager:
         port: int = DEFAULT_PORT,
         n_ctx: int = 16384,
         n_parallel: int = 4,
-        n_threads: int = 4,
+        n_threads: Optional[int] = None,
+        n_threads_batch: Optional[int] = None,
         cache_ram_mib: int = int(os.environ.get("LLAMA_CACHE_RAM_MIB", "1024")),
+        external_url: Optional[str] = None,
     ):
         self.host = host
         self.port = port
         self.n_ctx = n_ctx
         self.n_parallel = n_parallel
-        self.n_threads = n_threads
+        cpus = os.cpu_count() or 4
+        # Generation is memory-bound (best at ~8 threads), prompt reading is compute-bound (more helps).
+        # Measured on a 16-core Core Ultra 7: tg peaked at 4-8 threads, pp kept rising to 12.
+        self.n_threads = n_threads or int(os.environ.get("LLAMA_THREADS", min(8, cpus)))
+        self.n_threads_batch = n_threads_batch or int(os.environ.get("LLAMA_THREADS_BATCH", min(12, cpus)))
+        self.gpu_layers = int(os.environ.get("LLAMA_GPU_LAYERS", "99"))
+        # An already-running llama-server (e.g. on the host, with the GPU, while the app runs in a VM).
+        url = (external_url if external_url is not None else os.environ.get("LLAMA_SERVER_URL", "")).strip()
+        self.external_url = url.rstrip("/").removesuffix("/v1") or None
         # llama-server's prompt cache defaults to 8 GiB of RAM and grows with every distinct prompt;
         # on an 8 GB machine that got the server OOM-killed mid-run. 1 GiB still holds the shared prefix.
         self.cache_ram_mib = cache_ram_mib
@@ -165,12 +200,36 @@ class LlamaServerManager:
         self._current_model_path: Optional[Path] = None
 
     @property
+    def root_url(self) -> str:
+        return self.external_url or f"http://{self.host}:{self.port}"
+
+    @property
     def base_url(self) -> str:
-        return f"http://{self.host}:{self.port}/v1"
+        return f"{self.root_url}/v1"
 
     @property
     def health_url(self) -> str:
-        return f"http://{self.host}:{self.port}/health"
+        return f"{self.root_url}/health"
+
+    def build_command(self, binary_path: Path, model_path: Path, vulkan: bool) -> list:
+        cmd = [
+            str(binary_path),
+            "-m", str(model_path),
+            "--host", self.host,
+            "--port", str(self.port),
+            "-c", str(self.n_ctx),
+            "-np", str(self.n_parallel),
+            "-t", str(self.n_threads),
+            "-tb", str(self.n_threads_batch),
+            "--reasoning", "off",
+            "--reasoning-budget", "0",
+            "--reasoning-format", "none",
+            "--slots",
+            "--cache-ram", str(self.cache_ram_mib),
+        ]
+        if vulkan:
+            cmd += ["-ngl", str(self.gpu_layers)]
+        return cmd
 
     def is_healthy(self) -> bool:
         """Check if server is responding and ready to accept requests."""
@@ -195,10 +254,17 @@ class LlamaServerManager:
         """Ensure llama-server binary is present and server is actively running."""
         if self.is_healthy():
             return self.base_url
+        if self.external_url:
+            raise RuntimeError(f"External llama-server at {self.external_url} (LLAMA_SERVER_URL) is not reachable.")
 
+        vulkan = use_vulkan()
         binary_path = get_llama_server_binary()
         if not binary_path:
-            binary_path = download_llama_server()
+            binary_path = (
+                download_llama_server(VULKAN_BIN_DIR, VULKAN_DOWNLOAD_URL, VULKAN_DOWNLOAD_SHA256)
+                if vulkan
+                else download_llama_server()
+            )
 
         model_path = Path(model_path).resolve()
         if not model_path.is_file():
@@ -212,22 +278,12 @@ class LlamaServerManager:
         log_dir.mkdir(exist_ok=True)
         log_file = log_dir / "llama-server.log"
 
-        cmd = [
-            str(binary_path),
-            "-m", str(model_path),
-            "--host", self.host,
-            "--port", str(self.port),
-            "-c", str(self.n_ctx),
-            "-np", str(self.n_parallel),
-            "-t", str(self.n_threads),
-            "--reasoning", "off",
-            "--reasoning-budget", "0",
-            "--reasoning-format", "none",
-            "--slots",
-            "--cache-ram", str(self.cache_ram_mib),
-        ]
+        cmd = self.build_command(binary_path, model_path, vulkan)
 
-        logger.info(f"Starting native llama-server on port {self.port} with {self.n_parallel} slots...")
+        logger.info(
+            f"Starting native llama-server on port {self.port} with {self.n_parallel} slots "
+            f"({'Vulkan GPU' if vulkan else 'CPU'})..."
+        )
         logger.info(f"Command: {' '.join(cmd)}")
 
         with open(log_file, "a") as log_fp:
@@ -274,6 +330,8 @@ class LlamaServerManager:
         healthy = self.is_healthy()
         binary = get_llama_server_binary()
         return {
+            "backend": "external" if self.external_url else ("vulkan" if use_vulkan() else "cpu"),
+            "external_url": self.external_url,
             "binary_installed": binary is not None,
             "binary_path": str(binary) if binary else None,
             "running": healthy,

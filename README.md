@@ -79,6 +79,8 @@ Gemma runs **locally** — nothing leaves your machine with the default backend:
 - **`llama_server` (default)**: the app downloads a pinned, SHA256-verified `llama-server` binary from the official llama.cpp releases into `bin/` and manages the process itself (4 parallel slots). Label confidence comes from token log-probabilities.
 - **`openai_compatible`**: point it at a server you run elsewhere, e.g. llama-server on a machine with more cores or a GPU.
 - No Docker or third-party services needed.
+- **GPU (Vulkan)**: when the machine has a GPU (`/dev/dri/renderD*`), the app uses llama.cpp's Vulkan build and puts the whole model on the GPU. On an Intel Arc iGPU, prompt reading was ~4x faster than 12 CPU threads (1806 vs 426 tokens/s). Override with `LLAMA_BACKEND=cpu|vulkan`; `LLAMA_GPU_LAYERS` (default 99), `LLAMA_THREADS` / `LLAMA_THREADS_BATCH` (default 8 / 12, capped at the CPU count) and `LLAMA_CACHE_RAM_MIB` (default 1024) tune it further.
+- **Use an existing llama-server**: set `LLAMA_SERVER_URL=http://host:port` and the app uses that server instead of starting its own, e.g. when the app runs in a VM without GPU access and llama-server runs on the host (from a Lima VM: `LLAMA_SERVER_URL=http://host.lima.internal:8088`).
 - **Direct download from the script**:
   ```bash
   # Download Gemma 4 E2B Instruct GGUF weights directly into models/ (Standard Q4_K_M ~3.1 GB)
@@ -141,7 +143,17 @@ uv run python main.py run \
   --backend llama_server
 ```
 
-### 5. Automated Tests
+### 5. Benchmark
+
+`bench/cases.jsonl` holds 146 synthetic, labelled activities (about 4 per subcategory, with URLs). The runner sends them through the production path (anonymizer, then rules, then the LLM) and reports LLM accuracy on the cases the rules don't cover, end-to-end accuracy, speed, and how many right/wrong labels each confidence threshold would learn:
+
+```bash
+uv run python bench/run_benchmark.py                 # production JSON mode
+uv run python bench/run_benchmark.py --mode options  # option-probability readout
+uv run python bench/run_benchmark.py --corrections   # also use your own UI corrections (stay local)
+```
+
+### 6. Automated Tests
 
 ```bash
 uv run pytest tests/ -v
