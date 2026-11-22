@@ -436,6 +436,13 @@ class AppKnowledgeResolver:
             return info["category"], info["subcategory"]
         return None
 
+    def get_category_hint_exact(self, app_name: str) -> Optional[Tuple[str, str]]:
+        """Return a hint only for an exact app-name match (no fuzzy/partial matches)."""
+        info = self._cache.get(self.normalize_app_name(app_name))
+        if info and "category" in info and "subcategory" in info:
+            return info["category"], info["subcategory"]
+        return None
+
 
 # Global singleton instance
 app_knowledge = AppKnowledgeResolver()

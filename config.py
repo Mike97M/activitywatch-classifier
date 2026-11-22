@@ -118,12 +118,15 @@ def split_category_path(path: str) -> Tuple[str, str]:
 # Active Learning & Fast Classifier Thresholds
 # Calibrated for hierarchical category confidence across granular subcategories
 DEFAULT_CONFIDENCE_THRESHOLD = float(os.environ.get("CONFIDENCE_THRESHOLD", "0.60"))
+# Teacher labels below this confidence are used for the current run but never cached/learned:
+# a low-confidence LLM guess must not become a permanent 1.0-confidence memory match.
+LABEL_MIN_CONFIDENCE = float(os.environ.get("LABEL_MIN_CONFIDENCE", "0.70"))
 MODEL_PATH = MODELS_DIR / "fast_classifier.joblib"
 TRAINING_DATA_PATH = DATA_DIR / "training_data.jsonl"
 
 # Gemma E2B / LLM Configuration
-# Backends supported: 'local' (or 'llama_cpp'), 'ollama', 'gemini_api', 'openai_compatible', 'heuristic'
-DEFAULT_GEMMA_BACKEND = os.environ.get("GEMMA_BACKEND", "local")
+# Backends supported: 'llama_server', 'local' (in-process), 'ollama', 'gemini_api', 'openai_compatible', 'heuristic'
+DEFAULT_GEMMA_BACKEND = os.environ.get("GEMMA_BACKEND", "llama_server")
 DEFAULT_GEMMA_MODEL = os.environ.get("GEMMA_MODEL", "google/gemma-4-E2B-it")
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")

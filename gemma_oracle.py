@@ -73,6 +73,7 @@ class GemmaOracle:
         self.openai_key = openai_key
         self.local_gguf_path = local_gguf_path or LOCAL_GGUF_PATH or None
         self._llama_model = None
+        self._grammar_cache: Dict[Any, Any] = {}
 
     def find_local_model_path(self) -> Optional[Path]:
         """Locate downloaded GGUF weights in models directory or custom path."""
@@ -180,7 +181,8 @@ class GemmaOracle:
                                 {"role": "user", "content": batch_prompt},
                             ],
                             temperature=0.1,
-                            max_tokens=len(chunk) * 75 + 100,
+                            max_tokens=len(chunk) * 40 + 16,
+                            grammar=self._grammar(tax, batch=True),
                         )
                         text = out["choices"][0]["message"]["content"]
                         parsed_items = self._parse_llm_json_batch(text, tax)
@@ -468,8 +470,8 @@ class GemmaOracle:
             f"- Window / Tab Title: {title or 'unknown'}\n"
             f"- Website Domain: {parsed_domain or 'none'}\n"
             f"- URL / Link: {url or 'none'}\n\n"
-            f"Respond with ONLY a valid JSON object in this exact schema, with no markdown fences:\n"
-            f'{{"category": "<Category>", "subcategory": "<Subcategory>", "confidence": 0.95, "reasoning": "<1-sentence reasoning>"}}'
+            f"Respond with ONLY a valid JSON object in this exact schema, with no markdown fences and no extra fields:\n"
+            f'{{"category": "<Category>", "subcategory": "<Subcategory>", "confidence": 0.95}}'
         )
 
     def _build_batch_prompt(
@@ -521,11 +523,69 @@ class GemmaOracle:
             f"   - ONLY actual web search engines (Google Search, DuckDuckGo, Brave Search) or exploratory general browsing belong to 'Browsing & Research > Search & Exploration'.\n\n"
             f"Activities to categorize:\n"
             f"{activities_formatted}\n\n"
-            f"Respond with ONLY a valid JSON array of objects, one for each activity in the exact same order:\n"
+            f"Respond with ONLY a valid JSON array of objects, one for each activity in the exact same order, with no extra fields:\n"
             f'[\n'
-            f'  {{"id": <ID>, "category": "<Category>", "subcategory": "<Subcategory>", "confidence": 0.95, "reasoning": "<1-sentence reasoning>"}}\n'
+            f'  {{"id": <ID>, "category": "<Category>", "subcategory": "<Subcategory>", "confidence": 0.95}}\n'
             f']'
         )
+
+    # ------------------------------------------------------------------
+    # Constrained decoding
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _gbnf_string(value: str) -> str:
+        """GBNF literal matching a JSON string token (including its quotes)."""
+        return json.dumps(f'"{value}"')
+
+    def _build_grammar(self, taxonomy: Dict[str, List[str]], batch: bool = False) -> str:
+        """GBNF grammar that forces valid JSON with a valid category/subcategory pair.
+
+        Removes the need for markdown/preamble tokens and guarantees one of the taxonomy
+        pairs, which is both faster and more accurate than free-form generation.
+        """
+        q_cat = self._gbnf_string("category")
+        q_sub = self._gbnf_string("subcategory")
+        q_conf = self._gbnf_string("confidence")
+        q_id = self._gbnf_string("id")
+
+        pairs = []
+        for cat, subs in taxonomy.items():
+            for sub in subs:
+                pairs.append(
+                    f'{q_cat} ws ":" ws {self._gbnf_string(cat)} '
+                    f'ws "," ws {q_sub} ws ":" ws {self._gbnf_string(sub)}'
+                )
+        if not pairs:
+            return ""
+
+        rules = [
+            'ws ::= [ \\t\\n]*',
+            'num ::= [0-9]+ ("." [0-9]+)?',
+            "pair ::= " + " | ".join(f"pair{i}" for i in range(len(pairs))),
+        ]
+        rules.extend(f"pair{i} ::= {pair}" for i, pair in enumerate(pairs))
+
+        if batch:
+            rules.append('root ::= "[" ws (item (ws "," ws item)*)? ws "]"')
+            rules.append(
+                f'item ::= "{{" ws {q_id} ws ":" ws [0-9]+ ws "," ws pair '
+                f'ws "," ws {q_conf} ws ":" ws num ws "}}"'
+            )
+        else:
+            rules.append(f'root ::= "{{" ws pair ws "," ws {q_conf} ws ":" ws num ws "}}"')
+
+        return "\n".join(rules)
+
+    def _grammar(self, taxonomy: Dict[str, List[str]], batch: bool = False):
+        """Compile (and cache) the GBNF grammar as a LlamaGrammar object."""
+        key = (batch, tuple((c, tuple(subs)) for c, subs in taxonomy.items()))
+        if key not in self._grammar_cache:
+            from llama_cpp import LlamaGrammar
+
+            self._grammar_cache[key] = LlamaGrammar.from_string(
+                self._build_grammar(taxonomy, batch), verbose=False
+            )
+        return self._grammar_cache[key]
 
     def _parse_llm_json(
         self, raw_text: str, taxonomy: Dict[str, List[str]]
@@ -632,7 +692,7 @@ class GemmaOracle:
             logger.warning(f"Error parsing batch LLM JSON: {e}")
         return results
 
-    def _call_llama_cpp(self, prompt: str, taxonomy: Dict[str, List[str]], max_tokens: int = 150) -> Dict[str, Any]:
+    def _call_llama_cpp(self, prompt: str, taxonomy: Dict[str, List[str]], max_tokens: int = 48) -> Dict[str, Any]:
         """Run Gemma locally directly in-process via llama-cpp-python."""
         model_path = self.find_local_model_path()
         if not model_path:
@@ -667,6 +727,7 @@ class GemmaOracle:
                 ],
                 temperature=0.1,
                 max_tokens=max_tokens,
+                grammar=self._grammar(taxonomy, batch=False),
             )
             text = output["choices"][0]["message"]["content"]
             parsed = self._parse_llm_json(text, taxonomy)
@@ -686,6 +747,7 @@ class GemmaOracle:
                 "prompt": prompt,
                 "stream": False,
                 "format": "json",
+                "options": {"num_predict": 48},
             }
             with httpx.Client(timeout=15.0) as client:
                 resp = client.post(url, json=payload)
@@ -710,7 +772,10 @@ class GemmaOracle:
             )
             payload = {
                 "contents": [{"parts": [{"text": prompt}]}],
-                "generationConfig": {"response_mime_type": "application/json"},
+                "generationConfig": {
+                    "response_mime_type": "application/json",
+                    "maxOutputTokens": 48,
+                },
             }
             with httpx.Client(timeout=15.0) as client:
                 resp = client.post(url, json=payload)
@@ -738,8 +803,14 @@ class GemmaOracle:
                 "model": self.model_name or "local",
                 "messages": [{"role": "user", "content": prompt}],
                 "temperature": 0.1,
-                "max_tokens": 150,
+                "max_tokens": 48,
             }
+            if self.backend in ("llama_server", "llama-server"):
+                # llama-server accepts GBNF directly; this also avoids its json_schema
+                # sampler conflict with --reasoning-budget 0.
+                payload["grammar"] = self._build_grammar(taxonomy)
+            else:
+                payload["response_format"] = {"type": "json_object"}
             with httpx.Client(timeout=45.0) as client:
                 resp = client.post(url, json=payload, headers=headers)
                 resp.raise_for_status()

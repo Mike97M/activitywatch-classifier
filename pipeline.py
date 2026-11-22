@@ -17,6 +17,7 @@ from classifier import FastClassifier
 from config import (
     DEFAULT_CONFIDENCE_THRESHOLD,
     DEFAULT_TARGET_BUCKET_ID,
+    LABEL_MIN_CONFIDENCE,
     PIPELINE_STATS_FILE,
     TRAINING_DATA_PATH,
     split_category_path,
@@ -107,6 +108,7 @@ class ClassificationPipeline:
         total_processed = 0
         cached_calls = 0
         fast_calls = 0
+        rule_calls = 0
         gemma_calls = 0
         already_categorized_skipped = 0
         new_training_samples = 0
@@ -297,17 +299,19 @@ class ClassificationPipeline:
         logger.info(f"Total active events to classify across {len(source_bucket_ids)} buckets: {total_to_classify}")
 
         # Step 3: Classify events
-        # Pass 1: FastClassifier inference & grouping activities needing Gemma
+        # Pass 1: Build feature signatures, then classify the whole run in one vectorizer/model pass
+        records_meta: List[Dict[str, Any]] = []
+        feature_texts: List[str] = []
         event_records: List[Dict[str, Any]] = []
         events_needing_gemma: Dict[Tuple[str, str, str], List[int]] = {}
         gemma_sig_features: Dict[Tuple[str, str, str], str] = {}
         live_preview_events: List[Dict[str, Any]] = []
 
-        for idx, (source_id, event) in enumerate(all_events_to_classify):
+        for source_id, event in all_events_to_classify:
             raw_data = event.get("data", {})
             clean_data = anonymizer.sanitize_event_data(raw_data)
             app = clean_data.get("app", "")
-            
+
             # If app is empty (common in web watcher buckets), infer from bucket ID
             if not app and source_id:
                 s_lower = source_id.lower()
@@ -331,17 +335,7 @@ class ClassificationPipeline:
             url = clean_data.get("url", "")
             feature_text = self.classifier.extract_features(clean_data)
 
-            # Fast hierarchical prediction
-            pred_cat, pred_subcat, pred_full, confidence, prob_dict = (
-                self.classifier.predict_hierarchy(feature_text)
-            )
-
-            clean_feat = anonymizer.sanitize_text(feature_text)
-            is_cached = (clean_feat in self.classifier.samples_by_text)
-            classified_by = "cached_memory" if is_cached else "fast_classifier"
-            reasoning = "Previously categorized (exact memory match)" if is_cached else f"High confidence prediction ({confidence:.2f})"
-
-            rec = {
+            records_meta.append({
                 "source_id": source_id,
                 "event": event,
                 "clean_data": clean_data,
@@ -349,6 +343,45 @@ class ClassificationPipeline:
                 "title": title,
                 "url": url,
                 "feature_text": feature_text,
+            })
+            feature_texts.append(feature_text)
+
+        # Single batched inference: rules -> cache -> ML (one sparse matmul instead of N)
+        batch_predictions = self.classifier.predict_batch_meta(feature_texts)
+
+        for idx, (meta, pred) in enumerate(zip(records_meta, batch_predictions)):
+            source_id = meta["source_id"]
+            event = meta["event"]
+            app = meta["app"]
+            title = meta["title"]
+            url = meta["url"]
+            feature_text = meta["feature_text"]
+
+            pred_cat = pred["category"]
+            pred_subcat = pred["subcategory"]
+            pred_full = pred["full_category"]
+            confidence = pred["confidence"]
+            source = pred["source"]
+
+            if source == "rules":
+                rule_calls += 1
+                classified_by = "rules"
+                reasoning = "Deterministic app/domain rule"
+            elif source == "human_cache":
+                cached_calls += 1
+                classified_by = "human_correction_memory"
+                reasoning = "Previously corrected by a human"
+            elif source == "cache":
+                cached_calls += 1
+                classified_by = "cached_memory"
+                reasoning = "Previously categorized (memory match)"
+            else:
+                fast_calls += 1
+                classified_by = "fast_classifier"
+                reasoning = f"High confidence prediction ({confidence:.2f})"
+
+            rec = {
+                **meta,
                 "chosen_category": pred_cat,
                 "chosen_subcategory": pred_subcat,
                 "chosen_full": pred_full,
@@ -364,11 +397,6 @@ class ClassificationPipeline:
                 events_needing_gemma.setdefault(sig, []).append(idx)
                 gemma_sig_features[sig] = feature_text
             else:
-                if is_cached:
-                    cached_calls += 1
-                else:
-                    fast_calls += 1
-
                 live_item = {
                     "timestamp": event.get("timestamp"),
                     "duration": event.get("duration", 0.0),
@@ -401,6 +429,7 @@ class ClassificationPipeline:
                     "stats": {
                         "fast_calls": fast_calls,
                         "cached_calls": cached_calls,
+                        "rule_calls": rule_calls,
                         "gemma_calls": gemma_calls,
                     },
                 })
@@ -453,15 +482,16 @@ class ClassificationPipeline:
                 reas = gemma_res.get("reasoning", "")
                 
                 feat_text = gemma_sig_features[sig]
-                # Collect training samples ONLY from Gemma Oracle (never fast_classifier)
-                if collect_training_data:
+                # Collect training samples ONLY from confident Gemma Oracle results;
+                # a low-confidence guess must not become a permanent cached label.
+                if collect_training_data and conf >= LABEL_MIN_CONFIDENCE:
                     added = self.classifier.add_training_sample(
                         feature_text=feat_text,
                         category=cat,
                         subcategory=sub,
                         source="gemma_e2b",
                         retrain_now=False,
-                        retrain_batch_size=10,
+                        retrain_batch_size=0,
                     )
                     if added:
                         new_training_samples += 1
@@ -511,12 +541,8 @@ class ClassificationPipeline:
                     },
                 })
 
-            # Retrain immediately after the oracle batch completes if any pending samples remain
-            if new_training_samples > 0 and self.classifier._unretrained_count > 0:
-                logger.info(
-                    f"Retraining fast classifier immediately after oracle batch ({new_training_samples} new unique samples)..."
-                )
-                self.classifier.retrain_full()
+            # Retraining happens once at the end of the run: same final model, ~30 fewer
+            # full vectorizer refits, and nothing later in this run depends on it.
 
         # Pass 3: Assemble results and statistics
         for idx, rec in enumerate(event_records):
@@ -660,8 +686,10 @@ class ClassificationPipeline:
             "already_categorized_events_skipped": already_categorized_skipped,
             "cached_memory_calls": cached_calls,
             "fast_classifier_calls": fast_calls,
+            "rule_calls": rule_calls,
             "gemma_oracle_calls": gemma_calls,
             "confidence_threshold": threshold,
+            "label_min_confidence": LABEL_MIN_CONFIDENCE,
             "new_training_samples_added": new_training_samples,
             "category_distribution": category_distribution,
             "subcategory_distribution": subcategory_distribution,

@@ -128,8 +128,8 @@ class LlamaServerManager:
         self,
         host: str = "127.0.0.1",
         port: int = DEFAULT_PORT,
-        n_ctx: int = 8192,
-        n_parallel: int = 2,
+        n_ctx: int = 16384,
+        n_parallel: int = 4,
         n_threads: int = 4,
     ):
         self.host = host
