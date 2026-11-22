@@ -144,6 +144,10 @@ class TaskManager:
 
             task_id = f"task_{uuid.uuid4().hex[:8]}"
             task = Task(task_id=task_id, task_type=task_type, metadata=metadata)
+            # Mark running under the lock, before the thread starts: a "pending" task would be
+            # invisible to get_active_task() and a second request could start a parallel run.
+            task.status = "running"
+            task.started_at = time.time()
             self._tasks[task_id] = task
             self._active_task_id = task_id
 
@@ -157,8 +161,6 @@ class TaskManager:
                     del self._tasks[oldest[0].id]
 
         def worker():
-            task.status = "running"
-            task.started_at = time.time()
             logger.info(f"Task {task.id} ({task.task_type}) started.")
 
             def progress_callback(update: Dict[str, Any]):

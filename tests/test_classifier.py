@@ -258,3 +258,34 @@ def test_predict_batch_matches_predict_hierarchy():
         for feat, (full, conf, probs) in zip(feats, batch):
             cat, sub, full2, conf2, probs2 = clf.predict_hierarchy(feat)
             assert (full, conf) == (full2, conf2)
+
+
+def test_concurrent_corrections_and_predictions_do_not_corrupt_state(tmp_path):
+    import threading
+
+    clf = FastClassifier(model_path=tmp_path / "m.joblib", training_data_path=tmp_path / "d.jsonl")
+    errors = []
+
+    def add(n):
+        try:
+            for i in range(15):
+                clf.add_training_sample(f"app:tool{n}x{i} title:t{i}", "Development" if i % 2 else "Communication",
+                                        "Coding & IDE" if i % 2 else "Email", source="human_correction")
+        except Exception as e:  # pragma: no cover
+            errors.append(e)
+
+    def predict():
+        try:
+            for _ in range(30):
+                clf.predict_batch_meta(["app:tool0x1 title:t1", "app:other title:x"])
+        except Exception as e:  # pragma: no cover
+            errors.append(e)
+
+    threads = [threading.Thread(target=add, args=(n,)) for n in range(3)] + [threading.Thread(target=predict)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert not errors
+    assert len(clf.training_samples) == 45
+    assert len((tmp_path / "d.jsonl").read_text().splitlines()) == 45

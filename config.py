@@ -144,5 +144,10 @@ LIGHT_LOCAL_GGUF_NAME = "gemma-4-E2B-it-Q3_K_M.gguf"
 LOCAL_GGUF_PATH = os.environ.get("LOCAL_GGUF_PATH", "")
 
 # Server Web UI
-WEB_HOST = os.environ.get("WEB_HOST", "0.0.0.0")
+# Localhost only by default: the API can change LLM endpoints and read every ActivityWatch bucket.
+WEB_HOST = os.environ.get("WEB_HOST", "127.0.0.1")
+# Host headers the server answers to (blocks DNS rebinding). Add your LAN name/IP if you bind 0.0.0.0.
+WEB_ALLOWED_HOSTS = [
+    h.strip() for h in os.environ.get("WEB_ALLOWED_HOSTS", "localhost,127.0.0.1").split(",") if h.strip()
+]
 WEB_PORT = int(os.environ.get("WEB_PORT", "5000"))

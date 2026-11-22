@@ -5,7 +5,7 @@ from fastapi.testclient import TestClient
 from app import app
 from task_manager import TaskManager, task_manager
 
-client = TestClient(app)
+client = TestClient(app, base_url="http://localhost")
 
 
 def test_task_manager_lifecycle():
@@ -143,3 +143,16 @@ def test_pipeline_run_background_task_and_refresh_persistence():
         assert active_data["last_completed"]["status"] == "completed"
     finally:
         app_module.pipeline = orig_pipeline
+
+
+def test_second_start_while_first_queued_returns_same_task():
+    import threading
+    from task_manager import TaskManager
+
+    tm = TaskManager()
+    release = threading.Event()
+    first = tm.start_task("pipeline_run", lambda progress_callback=None: release.wait(5))
+    second = tm.start_task("pipeline_run", lambda progress_callback=None: None)
+    assert second is first
+    assert tm.get_active_task() is first
+    release.set()

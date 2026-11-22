@@ -1,5 +1,6 @@
 """Unit tests for ActivityWatch category synchronization and Activity tab integration."""
 
+import json
 from unittest.mock import MagicMock
 from category_sync import build_activitywatch_classes, sync_taxonomy_to_activitywatch
 from config import DEFAULT_TAXONOMY
@@ -57,16 +58,24 @@ def test_build_activitywatch_classes_with_training_samples():
     assert "claude\\.ai" in ai_class["rule"]["regex"]
 
 
-def test_sync_taxonomy_to_activitywatch():
+def test_sync_taxonomy_to_activitywatch(tmp_path):
     mock_client = MagicMock()
     mock_client.set_setting.return_value = True
+    original = {"classes": [{"name": ["Mine"]}], "category_sets": None, "active_set_ids": None}
+    mock_client.get_setting.side_effect = original.get
+    backup = tmp_path / "backup.json"
 
     mock_classifier = MagicMock()
     mock_classifier.taxonomy = DEFAULT_TAXONOMY
     mock_classifier.training_samples = []
 
-    res = sync_taxonomy_to_activitywatch(mock_client, mock_classifier)
+    res = sync_taxonomy_to_activitywatch(mock_client, mock_classifier, backup_path=backup)
     assert res["success"] is True
+    # User's original categories were saved before being overwritten, and only once
+    assert json.loads(backup.read_text()) == original
+    mock_client.get_setting.side_effect = lambda k: {"classes": "ours"}
+    sync_taxonomy_to_activitywatch(mock_client, mock_classifier, backup_path=backup)
+    assert json.loads(backup.read_text()) == original
     assert res["classes_count"] >= 30
     assert "Development" in res["categories"]
 

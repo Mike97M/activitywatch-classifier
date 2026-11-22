@@ -119,6 +119,8 @@ uv run python main.py serve
 ```
 Open **[http://localhost:5000](http://localhost:5000)** in your browser.
 
+The server binds to `127.0.0.1` only. To reach it from another device, set `WEB_HOST=0.0.0.0` and add the name/IP you'll use to `WEB_ALLOWED_HOSTS` (e.g. `WEB_ALLOWED_HOSTS=localhost,127.0.0.1,192.168.1.20`). There is no login, so only do this on a network you trust.
+
 - Select source buckets to clone from (e.g. `aw-watcher-window_laptop`).
 - Adjust the **Confidence Threshold** slider (default: `0.75`).
 - Click **"Start Non-Destructive Cloning & Gemma Classification"**.
@@ -155,3 +157,4 @@ ActivityWatch stores your personal productivity data. This application strictly 
 1. **Zero in-place modification**: It only issues `GET` requests to source buckets.
 2. **Dedicated target bucket**: All classified data is created in a separate bucket (`POST /api/0/buckets/<new_id>`).
 3. You can safely inspect, re-run, or delete the target bucket at any time without impacting your raw ActivityWatch logs.
+4. **One exception — ActivityWatch categories**: after each run the classifier's taxonomy replaces the `classes`, `category_sets` and `active_set_ids` settings in ActivityWatch. Before the first overwrite your original settings are saved to `data/aw_categories_backup.json`; restore them by POSTing each key back to `/api/0/settings/<key>`.

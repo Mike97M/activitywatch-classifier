@@ -1,9 +1,11 @@
 """Fast ML Classifier with Calibrated Confidence Scoring, Hierarchical Taxonomy, and Online Active Learning."""
 
+import functools
 import json
 import logging
 from pathlib import Path
 import re
+import threading
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 import joblib
@@ -99,6 +101,17 @@ def is_email_feature_text(feature_text: str) -> bool:
     return False
 
 
+def _locked(method):
+    """Serialize access to training samples, vectorizer and model across threads."""
+
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+
+    return wrapper
+
+
 class FastClassifier:
     """Fast, local classifier providing real-time hierarchical predictions and calibrated confidence scores."""
 
@@ -109,6 +122,9 @@ class FastClassifier:
         model_path: Path = MODEL_PATH,
         training_data_path: Path = TRAINING_DATA_PATH,
     ):
+        # Pipeline runs in a worker thread while the web UI submits corrections (which retrain).
+        # ponytail: one lock for everything; predictions wait while a retrain runs (seconds).
+        self._lock = threading.RLock()
         self.taxonomy = taxonomy or dict(DEFAULT_TAXONOMY)
         self.categories = sorted(categories or list(self.taxonomy.keys()))
         self.full_categories = sorted(flatten_taxonomy(self.taxonomy))
@@ -391,6 +407,7 @@ class FastClassifier:
 
         return best_cat, best_sub, best_full, cat_confidence, prob_dict
 
+    @_locked
     def predict_batch_meta(self, feature_texts: List[str]) -> List[Dict[str, Any]]:
         """Classify many feature strings in one vectorizer/model pass.
 
@@ -488,6 +505,7 @@ class FastClassifier:
         m = self.predict_batch_meta([feature_text])[0]
         return (m["category"], m["subcategory"], m["full_category"], m["confidence"], m["probs"])
 
+    @_locked
     def add_training_sample(
         self,
         feature_text: str,
@@ -577,6 +595,7 @@ class FastClassifier:
 
         return True
 
+    @_locked
     def retrain_full(self) -> bool:
         """Full retrain on all accumulated hierarchical training data."""
         if not self.training_samples:
@@ -617,6 +636,7 @@ class FastClassifier:
         except Exception as e:
             logger.warning(f"Could not save model to {self.model_path}: {e}")
 
+    @_locked
     def get_stats(self) -> Dict[str, Any]:
         """Summary metrics of current classifier state with category and subcategory counts."""
         category_counts: Dict[str, int] = {}

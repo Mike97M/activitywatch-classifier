@@ -3,7 +3,7 @@
 from fastapi.testclient import TestClient
 from app import app
 
-client = TestClient(app)
+client = TestClient(app, base_url="http://localhost")
 
 
 def test_get_status():
@@ -72,3 +72,13 @@ def test_llama_server_endpoints():
     stop_resp = client.post("/api/llama-server/stop")
     assert stop_resp.status_code == 200
     assert stop_resp.json()["status"] == "stopped"
+
+
+def test_rejects_cross_origin_writes_and_foreign_hosts():
+    evil = client.post("/api/settings", json={"openai_url": "http://evil/v1"},
+                       headers={"Origin": "http://evil.example"})
+    assert evil.status_code == 403
+    same = client.post("/api/settings", json={}, headers={"Origin": "http://localhost"})
+    assert same.status_code == 200
+    rebound = TestClient(app, base_url="http://evil.example").get("/api/buckets")
+    assert rebound.status_code == 400

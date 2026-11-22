@@ -2,9 +2,10 @@
 
 import logging
 from typing import Any, Dict, List, Optional
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from urllib.parse import urlparse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -20,6 +21,7 @@ from config import (
     DEFAULT_LOCAL_GGUF_REPO,
     DEFAULT_TARGET_BUCKET_ID,
     LIGHT_LOCAL_GGUF_NAME,
+    WEB_ALLOWED_HOSTS,
     WEB_HOST,
     WEB_PORT,
 )
@@ -32,13 +34,21 @@ logger = logging.getLogger("app")
 
 app = FastAPI(title="ActivityWatch Gemma Classifier", version="1.0.0")
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# The UI is same-origin, so no CORS. Reject foreign Host headers (DNS rebinding) and
+# cross-site writes (CSRF: a page you visit could otherwise POST new LLM endpoints and run the pipeline).
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=WEB_ALLOWED_HOSTS)
+
+
+@app.middleware("http")
+async def reject_cross_origin_writes(request: Request, call_next):
+    origin = request.headers.get("origin")
+    if (
+        request.method not in ("GET", "HEAD", "OPTIONS")
+        and origin
+        and urlparse(origin).netloc != request.headers.get("host")
+    ):
+        return JSONResponse({"detail": "Cross-origin request rejected"}, status_code=403)
+    return await call_next(request)
 
 # Global Pipeline components
 aw_client = AWClient()

@@ -4,6 +4,7 @@ Provides high-performance, slot-parallel, prefix-cached local LLM inference
 with zero Python GIL overhead and 100% self-contained binaries.
 """
 
+import hashlib
 import logging
 import os
 import shutil
@@ -23,6 +24,8 @@ DEFAULT_DOWNLOAD_URL = (
     f"https://github.com/ggml-org/llama.cpp/releases/download/{DEFAULT_RELEASE_TAG}/"
     f"llama-{DEFAULT_RELEASE_TAG}-bin-ubuntu-x64.tar.gz"
 )
+# From the GitHub release asset digest; update together with DEFAULT_RELEASE_TAG.
+DEFAULT_DOWNLOAD_SHA256 = "4496c40c11710b520a745bd9845a47fc91c8d42077c4069130a075d08d4718f1"
 BIN_DIR = Path(__file__).resolve().parent / "bin" / "llama-cpp"
 SERVER_BIN_NAME = "llama-server"
 DEFAULT_PORT = 8088
@@ -51,8 +54,12 @@ def get_llama_server_binary() -> Optional[Path]:
 def download_llama_server(
     dest_dir: Path = BIN_DIR,
     download_url: Optional[str] = None,
+    sha256: Optional[str] = None,
 ) -> Path:
-    """Download and extract precompiled llama-server C++ binary package."""
+    """Download, verify (SHA256) and extract the precompiled llama-server C++ binary package.
+
+    The default release is always verified; a custom `download_url` is verified when `sha256` is given.
+    """
     dest_dir.mkdir(parents=True, exist_ok=True)
     target_bin = dest_dir / SERVER_BIN_NAME
     if target_bin.is_file() and os.access(target_bin, os.X_OK):
@@ -60,6 +67,9 @@ def download_llama_server(
         return target_bin
 
     url = download_url or DEFAULT_DOWNLOAD_URL
+    expected_sha256 = sha256 or (DEFAULT_DOWNLOAD_SHA256 if url == DEFAULT_DOWNLOAD_URL else None)
+    if not expected_sha256:
+        logger.warning(f"No SHA256 given for {url}; the downloaded binary will NOT be verified.")
     logger.info(f"Downloading precompiled llama-server from {url}...")
 
     with tempfile.NamedTemporaryFile(suffix=".tar.gz", delete=False) as tmp_file:
@@ -71,13 +81,21 @@ def download_llama_server(
                 response.raise_for_status()
                 total = int(response.headers.get("content-length", 0))
                 downloaded = 0
+                digest = hashlib.sha256()
                 with open(tmp_path, "wb") as f:
                     for chunk in response.iter_bytes(chunk_size=65536):
                         f.write(chunk)
+                        digest.update(chunk)
                         downloaded += len(chunk)
                         if total > 0 and downloaded % (1024 * 1024 * 5) < 65536:
                             pct = (downloaded / total) * 100
                             logger.info(f"Downloading llama-server: {pct:.1f}% ({downloaded // (1024*1024)}MB / {total // (1024*1024)}MB)")
+
+        if expected_sha256 and digest.hexdigest() != expected_sha256.lower():
+            raise RuntimeError(
+                f"Checksum mismatch for {url}: expected {expected_sha256}, got {digest.hexdigest()}. "
+                "Refusing to install."
+            )
 
         logger.info(f"Extracting llama-server archive into {dest_dir}...")
         with tarfile.open(tmp_path, "r:gz") as tar:
@@ -93,6 +111,9 @@ def download_llama_server(
                     rel_name = Path(m.name)
 
                 target_dest = dest_dir / rel_name
+                if rel_name.is_absolute() or ".." in rel_name.parts:
+                    logger.warning(f"Skipping unsafe archive member: {m.name}")
+                    continue
                 if m.isdir():
                     target_dest.mkdir(parents=True, exist_ok=True)
                 elif m.isfile():

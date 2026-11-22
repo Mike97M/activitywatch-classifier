@@ -1,9 +1,11 @@
 """Synchronize Classifier Taxonomy and Learned Patterns into ActivityWatch's Native Categorization Settings."""
 
+import json
 import logging
 import re
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
-from config import DEFAULT_TAXONOMY
+from config import DATA_DIR, DEFAULT_TAXONOMY
 
 logger = logging.getLogger("category_sync")
 
@@ -427,8 +429,33 @@ def build_activitywatch_classes(
     return classes
 
 
-def sync_taxonomy_to_activitywatch(aw_client, classifier=None) -> Dict[str, Any]:
-    """Compile classifier taxonomy and push into ActivityWatch `/api/0/settings/classes` and category sets."""
+AW_SETTINGS_BACKUP_PATH = DATA_DIR / "aw_categories_backup.json"
+_SYNCED_SETTING_KEYS = ("classes", "category_sets", "active_set_ids")
+
+
+def backup_activitywatch_categories(aw_client, backup_path: Path = AW_SETTINGS_BACKUP_PATH) -> None:
+    """Save the user's ActivityWatch category settings once, before we first overwrite them.
+
+    Raises if the backup cannot be written, so the caller never overwrites unbacked-up settings.
+    ponytail: keeps only the first snapshot; restore by POSTing each key back to /api/0/settings/<key>.
+    """
+    if backup_path.exists():
+        return
+    snapshot = {key: aw_client.get_setting(key) for key in _SYNCED_SETTING_KEYS}
+    payload = json.dumps(snapshot, indent=2)  # serialize before touching the file
+    backup_path.write_text(payload, encoding="utf-8")
+    logger.info(f"Backed up ActivityWatch category settings to {backup_path}")
+
+
+def sync_taxonomy_to_activitywatch(
+    aw_client, classifier=None, backup_path: Path = AW_SETTINGS_BACKUP_PATH
+) -> Dict[str, Any]:
+    """Compile classifier taxonomy and push into ActivityWatch `/api/0/settings/classes` and category sets.
+
+    This replaces the user's ActivityWatch categories, so they are backed up first (once).
+    """
+    backup_activitywatch_categories(aw_client, backup_path)
+
     samples = classifier.training_samples if classifier else []
     taxonomy = classifier.taxonomy if classifier else DEFAULT_TAXONOMY
 

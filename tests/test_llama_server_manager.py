@@ -49,3 +49,33 @@ def test_download_llama_server_skips_if_existing(tmp_path):
         result = download_llama_server(dest_dir=tmp_path)
         assert result == fake_bin
         mock_client.assert_not_called()
+
+
+def test_download_llama_server_verifies_checksum(tmp_path, monkeypatch):
+    import hashlib
+    import io
+    import tarfile
+    import httpx
+    import pytest
+    import llama_server_manager as lsm
+
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+        data = b"#!/bin/sh\n"
+        info = tarfile.TarInfo("llama-b1/llama-server")
+        info.size = len(data)
+        tar.addfile(info, io.BytesIO(data))
+    archive = buf.getvalue()
+
+    real_client = httpx.Client
+    transport = httpx.MockTransport(lambda req: httpx.Response(200, content=archive))
+    monkeypatch.setattr(lsm.httpx, "Client", lambda **kw: real_client(transport=transport))
+
+    with pytest.raises(RuntimeError, match="Checksum mismatch"):
+        download_llama_server(dest_dir=tmp_path / "bad", download_url="http://x/a.tar.gz", sha256="0" * 64)
+    assert not (tmp_path / "bad" / "llama-server").exists()
+
+    good = download_llama_server(
+        dest_dir=tmp_path / "ok", download_url="http://x/a.tar.gz", sha256=hashlib.sha256(archive).hexdigest()
+    )
+    assert good.read_bytes() == b"#!/bin/sh\n"
