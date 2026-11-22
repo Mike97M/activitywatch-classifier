@@ -289,3 +289,18 @@ def test_concurrent_corrections_and_predictions_do_not_corrupt_state(tmp_path):
     assert not errors
     assert len(clf.training_samples) == 45
     assert len((tmp_path / "d.jsonl").read_text().splitlines()) == 45
+
+
+def test_rules_fixed_by_benchmark_v2():
+    def rule(app, title, url=""):
+        r = FastClassifier.match_rules(FastClassifier.extract_features({"app": app, "title": title, "url": url}))
+        return " > ".join(r) if r else None
+
+    assert rule("teams", "Meeting with Design | Microsoft Teams") == "Communication > Calls & Meetings"
+    assert rule("teams", "Chat | Backend Squad | Microsoft Teams") == "Communication > Team Chat"
+    assert rule("calibre", "E-book viewer - The Pragmatic Programmer") == "Education & Learning > Reading & Reference"
+    assert rule("firefox", "Kindle Cloud Reader", "https://read.amazon.com/") == "Education & Learning > Reading & Reference"
+    assert rule("firefox", "Amazon.com : keyboards", "https://www.amazon.com/s?k=x") == "Browsing & Research > Shopping & E-Commerce"
+    assert rule("firefox", "Show HN | Hacker News", "https://news.ycombinator.com/item?id=1") == (
+        "Browsing & Research > Technical Articles & Papers"
+    )

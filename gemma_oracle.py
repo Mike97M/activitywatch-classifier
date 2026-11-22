@@ -237,10 +237,11 @@ class GemmaOracle:
             f"Task: Categorize the following user activity into exactly ONE category and a matching subcategory from this taxonomy:\n\n"
             f"{taxonomy_text}\n\n"
             f"Classification Rules:\n"
-            f"1. Terminal emulators (foot, kitty, alacritty, ptyxis, konsole, gnome-terminal, xterm, wezterm, etc.) and shell prompts/sessions ('<user>@<host>', '~', bash, fish, zsh, tmux, ssh, cli commands) MUST ALWAYS be categorized as category 'Development', subcategory 'DevOps & Terminal'. NEVER categorize shell/terminal activities as 'System & Admin'.\n"
+            f"1. Terminal emulators (foot, kitty, alacritty, ptyxis, konsole, gnome-terminal, xterm, wezterm, etc.) and shell prompts/sessions ('<user>@<host>', '~', bash, fish, zsh, tmux, ssh, cli commands) MUST be categorized as category 'Development', subcategory 'DevOps & Terminal'. The only exception: system tools running in a terminal (htop, btop, top, and package managers such as zypper, apt, dnf, pacman, flatpak) follow rule 2.\n"
             f"2. 'System & Admin' is reserved strictly for OS system settings dialogs, hardware monitors (htop, btop), local activity trackers (ActivityWatch web UI), and package management tools.\n"
             f"3. For web browser activities, do NOT lazily dump activities into 'Browsing & Research > Search & Exploration'. Categorize based on the website domain, URL path, and actual function:\n"
-            f"   - Local dev servers (localhost, 127.0.0.1, 0.0.0.0, dev ports), admin consoles (Django site admin, scraper dashboards, Grafana), code repositories (GitHub, GitLab, 'user/repo' titles), and AI assistants/LLMs (Claude, ChatGPT, Gemini, AI Studio) MUST be categorized under 'Development' (DevOps & Terminal, Coding & IDE, or Git & Code Review).\n"
+            f"   - Local dev servers (localhost, 127.0.0.1, 0.0.0.0, dev ports), admin consoles (Django site admin, scraper dashboards, Grafana), code repositories (GitHub, GitLab, 'user/repo' titles) MUST be categorized under 'Development' (DevOps & Terminal, Coding & IDE, or Git & Code Review).\n"
+            f"   - AI assistants and LLM chat sites (Claude, ChatGPT, Gemini, Google AI Studio, Perplexity) belong to 'Browsing & Research > AI & Research'.\n"
             f"   - Local activity monitors (ActivityWatch web UI) belong to 'System & Admin > Hardware & System Monitor'.\n"
             f"   - Webmail services and email inboxes accessed in a browser (Gmail, Proton Mail, Mailbox.org, Outlook/Office365, Yahoo Mail, Fastmail, webmail) MUST ALWAYS be categorized as 'Communication > Email'. NEVER categorize web email as 'Browsing & Research'.\n"
             f"   - Project management (Jira, Linear), notes (Notion), and office/spreadsheets (Google Docs/Sheets, Grist) belong to 'Productivity & Planning'.\n"
@@ -549,11 +550,26 @@ class GemmaOracle:
                 "backend": HEURISTIC_BACKEND,
             }
 
-        # 0.8. AI Developer Tools & LLM Workspaces
+        # 0.8a. AI assistants / LLM chat sites (same as the rules and the LLM prompt)
+        if any(s in combined for s in [
+            "claude.ai", "chatgpt", "chat.openai.com", "aistudio.google.com", "gemini.google.com",
+            "perplexity.ai", "poe.com", "copilot.microsoft.com", "chat.mistral.ai", "chat.deepseek.com",
+        ]):
+            category = "Browsing & Research"
+            subcategory = pick_sub("Browsing & Research", "AI & Research")
+            return {
+                "category": category,
+                "subcategory": subcategory,
+                "full_category": f"{category} > {subcategory}",
+                "confidence": 0.96,
+                "reasoning": "AI assistant or LLM chat site",
+                "backend": HEURISTIC_BACKEND,
+            }
+
+        # 0.8b. AI developer platforms & notebooks
         is_ai_coding = any(s in combined for s in [
-            "claude.ai", "chatgpt", "openai.com", "aistudio.google.com", "gemini.google.com",
-            "huggingface.co", "openrouter.ai", "colab.research.google.com", "kaggle.com", "jupyter",
-            "modal.com", "replicate.com", "v0.dev"
+            "platform.openai.com", "huggingface.co", "openrouter.ai", "colab.research.google.com",
+            "kaggle.com", "jupyter", "modal.com", "replicate.com", "v0.dev"
         ])
         if is_ai_coding:
             category = "Development"

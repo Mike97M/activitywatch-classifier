@@ -131,3 +131,14 @@ def test_grammar_has_no_confidence_field():
     oracle = GemmaOracle(backend="openai_compatible", openai_url=OFFLINE_URL)
     tax = {"Development": ["Coding & IDE"]}
     assert "confidence" not in oracle._build_grammar(tax)
+
+
+def test_prompt_and_fallback_agree_with_rules_on_ai_and_terminal_tools():
+    oracle = GemmaOracle(backend="openai_compatible", openai_url=OFFLINE_URL)
+    prompt = oracle._build_prompt("firefox", "Claude", "https://claude.ai/chat/1", oracle.taxonomy)
+    assert "'Browsing & Research > AI & Research'" in prompt
+    assert "follow rule 2" in prompt
+    res = oracle._smart_heuristic_classify("firefox", "ChatGPT", "https://chatgpt.com/c/1", oracle.taxonomy)
+    assert res["full_category"] == "Browsing & Research > AI & Research"
+    res = oracle._smart_heuristic_classify("firefox", "Notebook", "https://colab.research.google.com/x", oracle.taxonomy)
+    assert res["category"] == "Development"

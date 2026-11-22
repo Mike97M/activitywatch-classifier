@@ -151,12 +151,16 @@ class LlamaServerManager:
         n_ctx: int = 16384,
         n_parallel: int = 4,
         n_threads: int = 4,
+        cache_ram_mib: int = int(os.environ.get("LLAMA_CACHE_RAM_MIB", "1024")),
     ):
         self.host = host
         self.port = port
         self.n_ctx = n_ctx
         self.n_parallel = n_parallel
         self.n_threads = n_threads
+        # llama-server's prompt cache defaults to 8 GiB of RAM and grows with every distinct prompt;
+        # on an 8 GB machine that got the server OOM-killed mid-run. 1 GiB still holds the shared prefix.
+        self.cache_ram_mib = cache_ram_mib
         self.process: Optional[subprocess.Popen] = None
         self._current_model_path: Optional[Path] = None
 
@@ -220,6 +224,7 @@ class LlamaServerManager:
             "--reasoning-budget", "0",
             "--reasoning-format", "none",
             "--slots",
+            "--cache-ram", str(self.cache_ram_mib),
         ]
 
         logger.info(f"Starting native llama-server on port {self.port} with {self.n_parallel} slots...")

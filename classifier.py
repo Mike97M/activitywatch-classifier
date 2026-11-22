@@ -43,8 +43,12 @@ _COMPILED_SEEDS: Dict[str, Dict[str, re.Pattern]] = {
 _DOMAIN_OVERRIDES = [
     (re.compile(r"(^|\.)docs\.google\.com$", re.I), "Productivity & Planning", "Docs & Spreadsheets"),
     (re.compile(r"(^|\.)music\.youtube\.com$", re.I), "Media & Entertainment", "Music & Audio"),
+    (re.compile(r"(^|\.)read\.amazon\.[a-z.]+$", re.I), "Education & Learning", "Reading & Reference"),
     (re.compile(r"(^|\.)(localhost|127\.0\.0\.1|0\.0\.0\.0)(:\d+)?$", re.I), "Development", "Coding & IDE"),
 ]
+
+# A chat app's window title can say it is a call ("Meeting with Design | Microsoft Teams", "Huddle").
+_MEETING_TITLE_RE = re.compile(r"\b(meeting|meet|call|huddle|webinar|standup)\b", re.I)
 
 _FEATURE_FIELD_RE = re.compile(
     r"(?:^|\s)(app|package|domain|root_domain|path|title|url):(.*?)(?=\s(?:app|package|domain|root_domain|path|title|url):|$)",
@@ -370,10 +374,9 @@ class FastClassifier:
                     return match
 
         if app and app not in GENERIC_HOST_APPS:
-            hint = app_knowledge.get_category_hint_exact(app)
-            if hint:
-                return hint
-            match = _seed_match(f"{app} {title}")
+            match = app_knowledge.get_category_hint_exact(app) or _seed_match(f"{app} {title}")
+            if match == ("Communication", "Team Chat") and _MEETING_TITLE_RE.search(title):
+                return ("Communication", "Calls & Meetings")
             if match:
                 return match
 

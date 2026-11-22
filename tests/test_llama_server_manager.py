@@ -79,3 +79,9 @@ def test_download_llama_server_verifies_checksum(tmp_path, monkeypatch):
         dest_dir=tmp_path / "ok", download_url="http://x/a.tar.gz", sha256=hashlib.sha256(archive).hexdigest()
     )
     assert good.read_bytes() == b"#!/bin/sh\n"
+
+
+def test_prompt_cache_ram_is_capped():
+    mgr = LlamaServerManager(cache_ram_mib=512)
+    assert mgr.cache_ram_mib == 512
+    assert LlamaServerManager().cache_ram_mib <= 2048  # never llama-server's 8 GiB default

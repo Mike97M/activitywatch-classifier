@@ -223,7 +223,7 @@ SUBCATEGORY_SEEDS: Dict[str, Dict[str, str]] = {
     "Education & Learning": {
         "Language Learning": r"\b(duolingo|babbel|memrise|anki|busuu|lingvist)\b",
         "Courses & Tutorials": r"\b(coursera|udemy|khan academy|edx|codecademy|pluralsight|datacamp)\b",
-        "Reading & Reference": r"\b(wikipedia|devdocs|manpage|books|translate|google translate|dictionary)\b",
+        "Reading & Reference": r"\b(wikipedia|devdocs|manpage|books|translate|google translate|dictionary|calibre|foliate|koreader|kindle)\b",
     },
     "Finance & Banking": {
         "Banking & Payments": r"\b(vipps|bankid|mobilbank|revolut|wise|paypal|home'bank|george|bt pay|24pay|ingbusiness|google wallet|apple pay|dnb|nordea|sparebank|sbanken)\b",
@@ -242,13 +242,13 @@ SUBCATEGORY_SEEDS: Dict[str, Dict[str, str]] = {
     "Browsing & Research": {
         "Search & Exploration": r"\b(google search|duckduckgo|duckduckgo\.com|bing search|bing\.com|brave search|search\.brave\.com|kagi|kagi\.com|searx|search)\b",
         "AI & Research": r"\b(claude\.ai|claude|chatgpt|chatgpt\.com|chat\.openai\.com|platform\.openai\.com|aistudio|aistudio\.google\.com|gemini\.google\.com|gemini|perplexity|perplexity\.ai|poe\.com|copilot\.microsoft\.com|meta\.ai|mistral\.ai|lechat|deepseek|deepseek\.com|groq\.com)\b",
-        "Technical Articles & Papers": r"\b(stackoverflow|stackoverflow\.com|stackexchange|stackexchange\.com|readthedocs|developer\.mozilla|python\.org|pkg\.go\.dev|crates\.io|huggingface|huggingface\.co|arxiv|arxiv\.org|artificialanalysis|medium\.com|substack\.com)\b",
+        "Technical Articles & Papers": r"\b(hacker news|news\.ycombinator\.com|stackoverflow|stackoverflow\.com|stackexchange|stackexchange\.com|readthedocs|developer\.mozilla|python\.org|pkg\.go\.dev|crates\.io|huggingface|huggingface\.co|arxiv|arxiv\.org|artificialanalysis|medium\.com|substack\.com)\b",
         "Shopping & E-Commerce": r"\b(amazon|ebay|aliexpress|shopify|cart|checkout|trumf|bergfreunde\.no)\b",
     },
     "Productivity & Planning": {
         "Notes & Knowledge Base": r"\b(obsidian|notion|notion\.so|confluence|evernote|logseq|joplin|onenote|wiki|craft\.do|roamresearch)\b",
         "Task & Project Management": r"\b(jira|atlassian\.net|trello|trello\.com|asana|asana\.com|linear|linear\.app|todoist|todoist\.com|ticktick|omnifocus|kanban|unum|deel)\b",
-        "Docs & Spreadsheets": r"\b(libreoffice|google docs|docs\.google\.com|google sheets|sheets\.google\.com|google slides|slides\.google\.com|drive\.google\.com|calibre|evince|okular|excel|word|calc|drive|sheets)\b",
+        "Docs & Spreadsheets": r"\b(libreoffice|google docs|docs\.google\.com|google sheets|sheets\.google\.com|google slides|slides\.google\.com|drive\.google\.com|evince|okular|excel|word|calc|drive|sheets)\b",
     },
     "Media & Entertainment": {
         "Video & Streaming": r"\b(youtube|youtube\.com|youtu\.be|twitch|twitch\.tv|netflix|netflix\.com|plex|jellyfin|vlc|mpv|kodi|prime video|primevideo\.com|disney\+|disneyplus\.com|bilibili|vimeo|dailymotion)\b",
@@ -257,7 +257,7 @@ SUBCATEGORY_SEEDS: Dict[str, Dict[str, str]] = {
     },
     "Social Media": {
         "X / Twitter": r"\b(home / x|twitter|twitter\.com|x\.com|t\.co|nitter)\b|\bon X:|\/ X\b",
-        "Reddit & Communities": r"\b(reddit|reddit\.com|old\.reddit\.com|lemmy|hacker news|news\.ycombinator\.com|lobste\.rs|forum)\b|:\s*r\/[a-zA-Z0-9_]+|\br\/[a-zA-Z0-9_]+\b",
+        "Reddit & Communities": r"\b(reddit|reddit\.com|old\.reddit\.com|lemmy|lobste\.rs|forum)\b|:\s*r\/[a-zA-Z0-9_]+|\br\/[a-zA-Z0-9_]+\b",
         "LinkedIn & Professional": r"\b(linkedin|linkedin\.com)\b",
     },
     "System & Admin": {
