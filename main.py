@@ -6,6 +6,7 @@ from aw_client import AWClient
 from classifier import FastClassifier
 from config import (
     DEFAULT_CONFIDENCE_THRESHOLD,
+    DEFAULT_GEMMA_BACKEND,
     DEFAULT_LOCAL_GGUF_NAME,
     DEFAULT_LOCAL_GGUF_REPO,
     DEFAULT_TARGET_BUCKET_ID,
@@ -65,9 +66,9 @@ def main():
     )
     run_parser.add_argument(
         "--backend",
-        default="local",
-        choices=["local", "heuristic", "ollama", "gemini_api", "openai_compatible", "llama_cpp"],
-        help="Gemma backend to use for low-confidence events (default: local)",
+        default=DEFAULT_GEMMA_BACKEND,
+        choices=["llama_server", "local", "heuristic", "ollama", "gemini_api", "openai_compatible", "llama_cpp"],
+        help=f"Gemma backend to use for low-confidence events (default: {DEFAULT_GEMMA_BACKEND})",
     )
     run_parser.add_argument(
         "--model-path",
