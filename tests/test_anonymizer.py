@@ -112,3 +112,87 @@ def test_sanitize_url_path_hex_tokens():
     clean_gist = anon.sanitize_url(gist_url)
     assert "fbbcdee420af674798e4d2fc32a62165" not in clean_gist
     assert "<TOKEN>" in clean_gist
+
+
+def _anon():
+    return TextAnonymizer(extra_usernames=["jdoe.guest"], extra_terms=["Jane Doe", "janedoe42"],
+                          hostnames=["workstation-7.local"])
+
+
+def test_hostnames_login_parts_and_extra_terms():
+    a = _anon()
+    assert a.sanitize_title("jdoe@workstation-7:~/src") == "<USER>@<HOST>:~/src"
+    assert a.sanitize_title("ssh workstation-7 - foot") == "ssh <HOST> - foot"
+    assert a.sanitize_title("Notes by jdoe - Obsidian") == "Notes by <USER> - Obsidian"
+    assert a.sanitize_title("Invoice for Jane  Doe") == "Invoice for <USER>"
+    assert "janedoe42" not in a.sanitize_url("https://github.com/janedoe42/private-notes")
+
+
+def test_secrets_without_key_value_context():
+    a = _anon()
+    for secret in ("sk-proj-AbC123xyz987654321QWE", "ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8",
+                   "AKIAIOSFODNN7EXAMPLE", "xoxb-1234567890-abcdefghij"):
+        assert secret not in a.sanitize_title(f"pasted {secret} here")
+    clean = a.sanitize_title("export OPENAI_API_KEY=notaprefixedkey123")
+    assert "notaprefixedkey123" not in clean and "OPENAI_API_KEY=<REDACTED>" in clean
+    # Lowercased feature text (how training data is stored) is still caught
+    assert "ghp_" not in a.sanitize_text("title:token ghp_a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6 url:")
+
+
+def test_phone_bank_card_and_network_identifiers():
+    a = _anon()
+    cases = {
+        "Call +40 721 234 567 - Signal": "<PHONE>",
+        "+49 151 23456789": "<PHONE>",
+        "Transfer to RO49 AAAA 1B31 0075 9384 0000 - Bank": "<IBAN>",
+        "Card 4111 1111 1111 1111 expires": "<CARD>",
+        "ssh 2001:db8:85a3::8a2e:370:7334": "<IP>",
+        "Device 3c:22:fb:9a:11:0e connected": "<MAC>",
+        "Order 4412345678900 confirmed": "<NUMBER>",  # fails Luhn, so not a card
+    }
+    for raw, tag in cases.items():
+        assert tag in a.sanitize_title(raw), raw
+
+
+def test_no_false_positives_on_ordinary_titles():
+    a = _anon()
+    for safe in ("Meeting at 12:30:45", "Python 3.12.1 release notes", "Password: Settings",
+                 "Top 10 songs of 2024", "localhost:8080 - dev server", "ID AB12 test plan beta",
+                 "Performance - Search Console"):
+        assert a.sanitize_title(safe) == safe, safe
+
+
+def test_unicode_contact_names_and_search_queries():
+    a = _anon()
+    assert "Ștefan" not in a.sanitize_title("Chat with Ștefan Popescu")
+    assert a.sanitize_title("divorce lawyer near me - Google Search — Mozilla Firefox") == (
+        "<QUERY> - Google Search — Mozilla Firefox"
+    )
+    assert "lawyer" not in a.sanitize_url("https://www.google.com/search?q=divorce+lawyer&hl=en")
+    assert "hl=en" in a.sanitize_url("https://www.google.com/search?q=divorce+lawyer&hl=en")
+    assert "private" not in a.sanitize_url("https://www.youtube.com/results?search_query=my+private+query")
+    assert "alice" not in a.sanitize_url("https://example.com/users/alice@example.org/profile")
+
+
+def test_training_masks_chat_and_email_titles_but_keeps_activity_words():
+    a = _anon()
+    chat = a.sanitize_for_training({"app": "Slack", "title": "Alice Smith (DM) - Acme Corp - Slack"})
+    assert chat["title"] == "<PRIVATE>"
+    meeting = a.sanitize_for_training({"app": "teams", "title": "Meeting with Bob | Microsoft Teams"})
+    assert meeting["title"] == "<PRIVATE> meeting"
+    mail = a.sanitize_for_training({"app": "firefox", "title": "Re: your diagnosis - Gmail",
+                                    "url": "https://mail.google.com/mail/u/0/#inbox"})
+    assert mail["title"] == "<PRIVATE>"
+    # Event data for the ActivityWatch output keeps the real title
+    assert "Acme" in a.sanitize_event_data({"app": "Slack", "title": "general - Acme Corp - Slack"})["title"]
+    # Already-stored feature strings get the same masking when re-sanitized on load
+    feat = "app:thunderbird package: domain: root_domain: path: title:re: lab results from dr. who url:"
+    assert a.sanitize_text(feat) == "app:thunderbird package: domain: root_domain: path: title:<PRIVATE> url:"
+
+
+def test_sanitizing_is_idempotent():
+    a = _anon()
+    for raw in ("jdoe@workstation-7:~ ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8 +40 721 234 567",
+                "foo - Google Search", "Chat with Bob", "OPENAI_API_KEY=abc123"):
+        once = a.sanitize_title(raw)
+        assert a.sanitize_title(once) == once, raw

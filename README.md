@@ -1,10 +1,10 @@
-# ActivityWatch Gemma Classifier 🧠⚡
+# ActivityWatch Gemma Classifier
 
 An intelligent, non-destructive activity classification and active learning pipeline for [ActivityWatch](https://activitywatch.net/) powered by a calibrated fast classifier and Google's **Gemma E2B** oracle.
 
 ---
 
-## 🌟 Key Features
+## Key Features
 
 - **Non-Destructive Operations**: Source ActivityWatch buckets (e.g. `aw-watcher-window_*`, `aw-watcher-web-*`) are **never modified in-place**. Events are cloned, enriched with classification metadata (`category`, `confidence`, `classified_by`, `reasoning`), and saved to a brand-new target bucket (e.g. `aw-classifier-categorized`).
 - **Two-Tier Architecture with Active Learning**:
@@ -12,7 +12,7 @@ An intelligent, non-destructive activity classification and active learning pipe
   - **Tier 2 (Gemma E2B Oracle)**: When the fast classifier's confidence score drops below the confidence threshold (default `0.60`), **Gemma E2B** is automatically summoned to analyze the app, window title, and URL context.
   - **Self-Improving Online Retraining**: Every activity classified by Gemma is added to the training set, immediately retraining and improving the fast model.
 - **Human-in-the-Loop Feedback**: Interactive UI allows correcting any activity's category with a single click, instantly feeding the correction back into the model.
-- **Automatic PII & Personal Data Scrubbing**: Before training samples or classified activities are saved or committed to Git, an active anonymizer removes usernames, shell prompt identities (`user@host`), private home paths (`/home/username/...`), emails, IP addresses, contact names, and sensitive URL tokens/credentials.
+- **Automatic PII & Personal Data Scrubbing**: Before training samples or classified activities are saved, an anonymizer removes login names (and their parts), hostnames, shell prompt identities (`user@host`), home paths, emails, phone numbers (including international), IBAN and card numbers, IPv4/IPv6/MAC addresses, API keys and secrets (`sk-…`, `ghp_…`, `AKIA…`, `*_API_KEY=…`), search queries (`?q=…` and "… - Google Search" titles), contact names, and URL tokens. Training samples also have chat and email window titles masked (contact names, subjects), keeping only words like "meeting" or "inbox"; your ActivityWatch output keeps the real titles. Add your own identifiers (real name, GitHub handle, other device names) with `ANONYMIZER_EXTRA_TERMS="Jane Doe,janedoe42,my-laptop"`. Existing training data is re-cleaned automatically the next time the app loads it.
 - **Two Gemma Backends**:
   - `llama_server` (default): Native `llama.cpp` server started and managed automatically, with parallel slots and token logprobs for label confidence.
   - `openai_compatible`: Any OpenAI-compatible `/v1/chat/completions` server (a llama-server on another machine, vLLM, LM Studio). Set the URL, key and model in Settings or via `OPENAI_COMPATIBLE_URL` / `OPENAI_API_KEY` / `GEMMA_MODEL`.
@@ -21,7 +21,7 @@ An intelligent, non-destructive activity classification and active learning pipe
 
 ---
 
-## 🏗️ Architecture
+## Architecture
 
 ```
                                     ┌────────────────────────┐
@@ -73,7 +73,7 @@ An intelligent, non-destructive activity classification and active learning pipe
 
 ---
 
-## ⚡ How Gemma Runs
+## How Gemma Runs
 
 Gemma runs **locally** — nothing leaves your machine with the default backend:
 - **`llama_server` (default)**: the app downloads a pinned, SHA256-verified `llama-server` binary from the official llama.cpp releases into `bin/` and manages the process itself (4 parallel slots). Label confidence comes from token log-probabilities.
@@ -91,7 +91,7 @@ Gemma runs **locally** — nothing leaves your machine with the default backend:
 
 ---
 
-## 🚀 Quickstart with `uv`
+## Quickstart with `uv`
 
 ### 1. Requirements & Setup
 
@@ -149,7 +149,7 @@ uv run pytest tests/ -v
 
 ---
 
-## 🔒 Safety & Non-Destructive Guarantee
+## Safety & Non-Destructive Guarantee
 
 ActivityWatch stores your personal productivity data. This application strictly guarantees:
 1. **Zero in-place modification**: It only issues `GET` requests to source buckets.
@@ -159,7 +159,7 @@ ActivityWatch stores your personal productivity data. This application strictly 
 
 ---
 
-## 📜 License
+## License
 
 This project is released under the [MIT License](LICENSE).
 

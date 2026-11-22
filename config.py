@@ -6,7 +6,8 @@ from typing import Dict, List, Optional, Tuple
 
 # Base Paths
 BASE_DIR = Path(__file__).resolve().parent
-DATA_DIR = BASE_DIR / "data"
+# Overridable so tests never touch your real training data, stats or model.
+DATA_DIR = Path(os.environ.get("AW_CLASSIFIER_DATA_DIR", BASE_DIR / "data"))
 MODELS_DIR = BASE_DIR / "models"
 
 DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -129,7 +130,7 @@ LLM_DEFAULT_CONFIDENCE = float(os.environ.get("LLM_DEFAULT_CONFIDENCE", "0.80"))
 # Gemma 4 E2B logprobs run high even when wrong: on the 33-case benchmark 0.70 kept 6/7 wrong
 # labels, 0.95 kept 4/7 (and 25/26 right ones); 4 wrong ones sat at >= 0.998, so no threshold fixes those.
 LOGPROB_LABEL_MIN_CONFIDENCE = float(os.environ.get("LOGPROB_LABEL_MIN_CONFIDENCE", "0.95"))
-MODEL_PATH = MODELS_DIR / "fast_classifier.joblib"
+MODEL_PATH = Path(os.environ.get("AW_CLASSIFIER_MODEL_PATH", MODELS_DIR / "fast_classifier.joblib"))
 TRAINING_DATA_PATH = DATA_DIR / "training_data.jsonl"
 
 # Gemma E2B / LLM Configuration

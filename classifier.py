@@ -3,6 +3,7 @@
 import functools
 import json
 import logging
+import os
 from pathlib import Path
 import re
 import threading
@@ -226,9 +227,7 @@ class FastClassifier:
                 logger.info(f"Loaded {len(self.training_samples)} sanitized training examples.")
 
                 if needs_rewrite:
-                    with open(self.training_data_path, "w", encoding="utf-8") as f:
-                        for s in self.training_samples:
-                            f.write(json.dumps(s) + "\n")
+                    self._rewrite_training_file()
                     logger.info("Rewrote training data file with clean PII and taxonomy format.")
 
                 # If we have training samples, train or retrain
@@ -237,10 +236,18 @@ class FastClassifier:
             except Exception as e:
                 logger.warning(f"Could not load training data from {self.training_data_path}: {e}")
 
+    def _rewrite_training_file(self):
+        """Rewrite the JSONL atomically: a crash mid-write must not truncate the training data."""
+        tmp = self.training_data_path.with_suffix(self.training_data_path.suffix + ".tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
+            for s in self.training_samples:
+                f.write(json.dumps(s) + "\n")
+        os.replace(tmp, self.training_data_path)
+
     @staticmethod
     def extract_features(event_data: Dict[str, Any]) -> str:
         """Create sanitized textual signature from event payload with zero PII and rich domain/link signals."""
-        clean_data = anonymizer.sanitize_event_data(event_data)
+        clean_data = anonymizer.sanitize_for_training(event_data)
         app = str(clean_data.get("app") or "").strip().lower()
         title = str(clean_data.get("title") or "").strip().lower()
         url = str(clean_data.get("url") or "").strip().lower()
@@ -557,9 +564,7 @@ class FastClassifier:
             self._index_sample(existing)
 
             try:
-                with open(self.training_data_path, "w", encoding="utf-8") as f:
-                    for s in self.training_samples:
-                        f.write(json.dumps(s) + "\n")
+                self._rewrite_training_file()
             except Exception as e:
                 logger.warning(f"Failed to rewrite {self.training_data_path}: {e}")
         else:
