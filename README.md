@@ -159,7 +159,11 @@ ActivityWatch stores your personal productivity data. This application strictly 
 
 ---
 
-## 📜 Third-Party Licenses
+## 📜 License
+
+This project is released under the [MIT License](LICENSE).
+
+### Third-Party Licenses
 
 This project uses, downloads, or talks to the following tools. Each keeps its own license:
 

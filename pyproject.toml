@@ -3,6 +3,8 @@ name = "activitywatch-classifier"
 version = "0.1.0"
 description = "ActivityWatch Classifier & Active Learning Pipeline with Gemma E2B Oracle"
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115.0",
