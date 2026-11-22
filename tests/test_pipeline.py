@@ -7,6 +7,9 @@ from classifier import FastClassifier
 from gemma_oracle import GemmaOracle
 from pipeline import ClassificationPipeline
 
+# Nothing listens on the discard port: the oracle falls back to its heuristic instantly.
+OFFLINE_URL = "http://127.0.0.1:9/v1"
+
 
 def test_pipeline_active_learning_and_cloning():
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -129,7 +132,7 @@ def test_pipeline_with_afk_filtering():
         mock_aw.insert_events.side_effect = lambda bucket_id, evs: evs
 
         classifier = FastClassifier(model_path=model_path, training_data_path=data_path)
-        oracle = GemmaOracle(backend="heuristic")
+        oracle = GemmaOracle(backend="openai_compatible", openai_url=OFFLINE_URL)
 
         pipeline = ClassificationPipeline(
             aw_client=mock_aw,
@@ -170,7 +173,7 @@ def test_pipeline_with_time_range():
         mock_aw.insert_events.side_effect = lambda bucket_id, evs: evs
 
         classifier = FastClassifier(model_path=model_path, training_data_path=data_path)
-        oracle = GemmaOracle(backend="heuristic")
+        oracle = GemmaOracle(backend="openai_compatible", openai_url=OFFLINE_URL)
         pipeline = ClassificationPipeline(aw_client=mock_aw, classifier=classifier, gemma_oracle=oracle)
 
         stats = pipeline.run(
@@ -214,7 +217,7 @@ def test_pipeline_no_fast_classifier_training_samples():
         assert classifier.is_trained is True
         initial_samples_count = len(classifier.training_samples)
 
-        oracle = GemmaOracle(backend="heuristic")
+        oracle = GemmaOracle(backend="openai_compatible", openai_url=OFFLINE_URL)
         pipeline = ClassificationPipeline(aw_client=mock_aw, classifier=classifier, gemma_oracle=oracle, confidence_threshold=0.3)
 
         stats = pipeline.run(
@@ -251,7 +254,7 @@ def test_pipeline_device_afk_isolation():
         mock_aw.insert_events.side_effect = lambda bucket_id, evs: evs
 
         classifier = FastClassifier(model_path=model_path, training_data_path=data_path)
-        oracle = GemmaOracle(backend="heuristic")
+        oracle = GemmaOracle(backend="openai_compatible", openai_url=OFFLINE_URL)
         pipeline = ClassificationPipeline(aw_client=mock_aw, classifier=classifier, gemma_oracle=oracle)
 
         stats = pipeline.run(
@@ -325,7 +328,7 @@ def test_pipeline_audible_tab_afk_exception():
         mock_aw.insert_events.side_effect = lambda bucket_id, evs: evs
 
         classifier = FastClassifier(model_path=model_path, training_data_path=data_path)
-        oracle = GemmaOracle(backend="heuristic")
+        oracle = GemmaOracle(backend="openai_compatible", openai_url=OFFLINE_URL)
         pipeline = ClassificationPipeline(aw_client=mock_aw, classifier=classifier, gemma_oracle=oracle)
 
         stats = pipeline.run(
@@ -362,7 +365,7 @@ def test_pipeline_skips_zero_duration_events():
         mock_aw.insert_events.side_effect = lambda bucket_id, evs: evs
 
         classifier = FastClassifier(model_path=model_path, training_data_path=data_path)
-        oracle = GemmaOracle(backend="heuristic")
+        oracle = GemmaOracle(backend="openai_compatible", openai_url=OFFLINE_URL)
         pipeline = ClassificationPipeline(aw_client=mock_aw, classifier=classifier, gemma_oracle=oracle)
 
         stats = pipeline.run(
@@ -397,7 +400,7 @@ def test_pipeline_target_deduplication_and_force_reclassify():
         mock_aw.insert_events.side_effect = lambda bucket_id, evs: evs
 
         classifier = FastClassifier(model_path=model_path, training_data_path=data_path)
-        oracle = GemmaOracle(backend="heuristic")
+        oracle = GemmaOracle(backend="openai_compatible", openai_url=OFFLINE_URL)
         pipeline = ClassificationPipeline(aw_client=mock_aw, classifier=classifier, gemma_oracle=oracle)
 
         # 1. Normal run: deduplication skips the first event
@@ -441,7 +444,7 @@ def test_pipeline_does_not_learn_from_heuristic_fallback():
             model_path=Path(tmpdir) / "model.joblib", training_data_path=Path(tmpdir) / "data.jsonl"
         )
         # Unreachable server -> every activity falls back to the heuristic
-        oracle = GemmaOracle(backend="openai_compatible", openai_url="http://127.0.0.1:9/v1")
+        oracle = GemmaOracle(backend="openai_compatible", openai_url=OFFLINE_URL)
 
         stats = ClassificationPipeline(
             aw_client=mock_aw, classifier=classifier, gemma_oracle=oracle, confidence_threshold=0.75
@@ -471,3 +474,31 @@ def test_attach_browser_urls_matches_overlapping_tab():
     assert [e["data"].get("url") for e in events] == [
         "https://a.example", "https://long.example", "https://b.example", None, None,
     ]
+
+
+def test_logprob_confidence_uses_stricter_label_threshold():
+    """0.9 from logprobs is below the 0.95 bar; 0.9 from a fixed-confidence backend clears 0.70."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        mock_aw = MagicMock()
+        mock_aw.find_afk_bucket_for_source.return_value = None
+        mock_aw.get_events.return_value = [
+            {"timestamp": "2026-11-05T12:00:00Z", "duration": 60.0,
+             "data": {"app": "customtool", "title": "Quarterly planning board"}},
+            {"timestamp": "2026-11-05T12:01:00Z", "duration": 60.0,
+             "data": {"app": "customtool", "title": "Budget spreadsheet view"}},
+        ]
+        mock_aw.insert_events.side_effect = lambda bucket_id, evs: evs
+        base = {"category": "Development", "subcategory": "Coding & IDE",
+                "full_category": "Development > Coding & IDE", "confidence": 0.9, "backend": "llama_server"}
+        oracle = MagicMock()
+        oracle.classify_batch.return_value = [dict(base, confidence_source="logprobs"), dict(base)]
+
+        classifier = FastClassifier(
+            model_path=Path(tmpdir) / "m.joblib", training_data_path=Path(tmpdir) / "d.jsonl"
+        )
+        stats = ClassificationPipeline(
+            aw_client=mock_aw, classifier=classifier, gemma_oracle=oracle, confidence_threshold=0.75
+        ).run(source_bucket_ids=["s"], target_bucket_id="t", limit_per_bucket=10)
+
+        assert stats["new_training_samples_added"] == 1
+        assert "budget" in classifier.training_samples[0]["text"]

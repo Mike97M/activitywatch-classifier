@@ -121,23 +121,25 @@ DEFAULT_CONFIDENCE_THRESHOLD = float(os.environ.get("CONFIDENCE_THRESHOLD", "0.6
 # Teacher labels below this confidence are used for the current run but never cached/learned:
 # a low-confidence LLM guess must not become a permanent 1.0-confidence memory match.
 LABEL_MIN_CONFIDENCE = float(os.environ.get("LABEL_MIN_CONFIDENCE", "0.70"))
-# Confidence assigned to LLM labels from backends that return no token logprobs (ollama, gemini_api,
-# in-process local). The model's self-reported number is ignored: it just echoes the prompt example.
-# ponytail: fixed value, not calibrated; set below LABEL_MIN_CONFIDENCE to stop learning from those backends.
+# Confidence assigned to LLM labels when an OpenAI-compatible server returns no token logprobs.
+# The model's self-reported number is ignored: it just echoes the prompt example.
+# ponytail: fixed value, not calibrated; set below LABEL_MIN_CONFIDENCE to stop learning from such servers.
 LLM_DEFAULT_CONFIDENCE = float(os.environ.get("LLM_DEFAULT_CONFIDENCE", "0.80"))
+# Stricter bar for confidences read from token logprobs (llama_server / openai_compatible).
+# Gemma 4 E2B logprobs run high even when wrong: on the 33-case benchmark 0.70 kept 6/7 wrong
+# labels, 0.95 kept 4/7 (and 25/26 right ones); 4 wrong ones sat at >= 0.998, so no threshold fixes those.
+LOGPROB_LABEL_MIN_CONFIDENCE = float(os.environ.get("LOGPROB_LABEL_MIN_CONFIDENCE", "0.95"))
 MODEL_PATH = MODELS_DIR / "fast_classifier.joblib"
 TRAINING_DATA_PATH = DATA_DIR / "training_data.jsonl"
 
 # Gemma E2B / LLM Configuration
-# Backends supported: 'llama_server', 'local' (in-process), 'ollama', 'gemini_api', 'openai_compatible', 'heuristic'
+# Backends: 'llama_server' (managed local llama.cpp server) or 'openai_compatible' (any /v1/chat/completions URL)
 DEFAULT_GEMMA_BACKEND = os.environ.get("GEMMA_BACKEND", "llama_server")
 DEFAULT_GEMMA_MODEL = os.environ.get("GEMMA_MODEL", "google/gemma-4-E2B-it")
-OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 OPENAI_COMPATIBLE_URL = os.environ.get("OPENAI_COMPATIBLE_URL", "http://127.0.0.1:8000/v1")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 
-# Local In-Process Gemma 4 E2B GGUF Model Settings
+# Gemma 4 E2B GGUF weights served by llama-server
 DEFAULT_LOCAL_GGUF_REPO = "unsloth/gemma-4-E2B-it-GGUF"
 DEFAULT_LOCAL_GGUF_NAME = "gemma-4-E2B-it-Q4_K_M.gguf"
 LIGHT_LOCAL_GGUF_NAME = "gemma-4-E2B-it-Q3_K_M.gguf"

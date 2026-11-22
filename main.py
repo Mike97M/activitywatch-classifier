@@ -67,7 +67,7 @@ def main():
     run_parser.add_argument(
         "--backend",
         default=DEFAULT_GEMMA_BACKEND,
-        choices=["llama_server", "local", "heuristic", "ollama", "gemini_api", "openai_compatible", "llama_cpp"],
+        choices=["llama_server", "openai_compatible"],
         help=f"Gemma backend to use for low-confidence events (default: {DEFAULT_GEMMA_BACKEND})",
     )
     run_parser.add_argument(

@@ -456,11 +456,7 @@
           <label class="block font-semibold text-slate-700 dark:text-slate-300 mb-1">Gemma E2B Backend Engine</label>
           <select id="setting-gemma-backend" class="w-full bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-3 py-2 focus:outline-none focus:border-aw">
             <option value="llama_server">Native C++ llama-server (Multi-slot batching & Prefix caching)</option>
-            <option value="local">Local In-Process Gemma 4 E2B (llama-cpp direct)</option>
-            <option value="heuristic">Smart Heuristic Oracle (Zero latency fallback)</option>
-            <option value="ollama">Ollama Server (Local Gemma 4 E2B)</option>
-            <option value="gemini_api">Google Gemini API</option>
-            <option value="openai_compatible">OpenAI-Compatible (vLLM / LMStudio / LiteRT)</option>
+            <option value="openai_compatible">OpenAI-Compatible API (llama-server on another host, vLLM, LM Studio)</option>
           </select>
         </div>
 
@@ -485,21 +481,18 @@
           </div>
         </div>
 
-        <div id="ollama-options" class="space-y-3 hidden">
+        <div id="openai-options" class="space-y-3 hidden">
           <div>
-            <label class="block font-semibold text-slate-700 dark:text-slate-300 mb-1">Ollama Host URL</label>
-            <input type="text" id="setting-ollama-host" value="http://127.0.0.1:11434" class="w-full bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-3 py-2 font-mono" />
+            <label for="setting-openai-url" class="block font-semibold text-slate-700 dark:text-slate-300 mb-1">API Base URL</label>
+            <input type="url" id="setting-openai-url" placeholder="http://127.0.0.1:8000/v1" class="w-full bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-3 py-2 font-mono" />
           </div>
           <div>
-            <label class="block font-semibold text-slate-700 dark:text-slate-300 mb-1">Gemma Model Tag</label>
+            <label for="setting-openai-key" class="block font-semibold text-slate-700 dark:text-slate-300 mb-1">API Key (optional)</label>
+            <input type="password" id="setting-openai-key" autocomplete="off" placeholder="Leave empty to keep current" class="w-full bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-3 py-2 font-mono" />
+          </div>
+          <div>
+            <label for="setting-gemma-model" class="block font-semibold text-slate-700 dark:text-slate-300 mb-1">Model Name</label>
             <input type="text" id="setting-gemma-model" value="google/gemma-4-E2B-it" class="w-full bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-3 py-2 font-mono" />
-          </div>
-        </div>
-
-        <div id="gemini-options" class="space-y-3 hidden">
-          <div>
-            <label class="block font-semibold text-slate-700 dark:text-slate-300 mb-1">Gemini API Key</label>
-            <input type="password" id="setting-gemini-key" placeholder="AIzaSy..." class="w-full bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-3 py-2 font-mono" />
           </div>
         </div>
 

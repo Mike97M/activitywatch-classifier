@@ -71,8 +71,6 @@ class SettingsUpdateRequest(BaseModel):
     confidence_threshold: Optional[float] = Field(None, ge=0.0, le=1.0)
     gemma_backend: Optional[str] = None
     gemma_model: Optional[str] = None
-    ollama_host: Optional[str] = None
-    gemini_api_key: Optional[str] = None
     openai_url: Optional[str] = None
     openai_key: Optional[str] = None
     local_gguf_path: Optional[str] = None
@@ -122,8 +120,8 @@ def get_status() -> Dict[str, Any]:
     oracle_status = {
         "backend": gemma_oracle.backend,
         "model_name": gemma_oracle.model_name,
-        "ollama_host": gemma_oracle.ollama_host,
-        "has_gemini_key": bool(gemma_oracle.gemini_api_key),
+        "openai_url": gemma_oracle.openai_url,
+        "has_openai_key": bool(gemma_oracle.openai_key),
         "categories": classifier.categories,
         "taxonomy": classifier.taxonomy,
         "local_model": gemma_oracle.get_local_model_info(),
@@ -302,10 +300,6 @@ def update_settings(req: SettingsUpdateRequest) -> Dict[str, Any]:
         oracle_kwargs["backend"] = req.gemma_backend
     if req.gemma_model is not None:
         oracle_kwargs["model_name"] = req.gemma_model
-    if req.ollama_host is not None:
-        oracle_kwargs["ollama_host"] = req.ollama_host
-    if req.gemini_api_key is not None:
-        oracle_kwargs["gemini_api_key"] = req.gemini_api_key
     if req.openai_url is not None:
         oracle_kwargs["openai_url"] = req.openai_url
     if req.openai_key is not None:
@@ -318,7 +312,10 @@ def update_settings(req: SettingsUpdateRequest) -> Dict[str, Any]:
         oracle_kwargs["categories"] = classifier.categories
 
     if oracle_kwargs:
-        gemma_oracle.update_settings(**oracle_kwargs)
+        try:
+            gemma_oracle.update_settings(**oracle_kwargs)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
 
     return {"status": "updated", "settings": get_status()}
 

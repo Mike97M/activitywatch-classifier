@@ -13,13 +13,10 @@ An intelligent, non-destructive activity classification and active learning pipe
   - **Self-Improving Online Retraining**: Every activity classified by Gemma is added to the training set, immediately retraining and improving the fast model.
 - **Human-in-the-Loop Feedback**: Interactive UI allows correcting any activity's category with a single click, instantly feeding the correction back into the model.
 - **Automatic PII & Personal Data Scrubbing**: Before training samples or classified activities are saved or committed to Git, an active anonymizer removes usernames, shell prompt identities (`user@host`), private home paths (`/home/username/...`), emails, IP addresses, contact names, and sensitive URL tokens/credentials.
-- **Multiple Gemma Backends**:
+- **Two Gemma Backends**:
   - `llama_server` (default): Native `llama.cpp` server started and managed automatically, with parallel slots and token logprobs for label confidence.
-  - `local`: Direct in-process Gemma 4 E2B execution via `llama-cpp-python` (CPU/GPU).
-  - `heuristic`: Built-in zero-latency smart oracle for instant offline use.
-  - `ollama`: Connects to local/remote Ollama (`gemma-4-e2b`).
-  - `gemini_api`: Google Gemini/Gemma API endpoint.
-  - `openai_compatible`: Any OpenAI-compatible server (vLLM, LM Studio, LiteRT).
+  - `openai_compatible`: Any OpenAI-compatible `/v1/chat/completions` server (a llama-server on another machine, vLLM, LM Studio). Set the URL, key and model in Settings or via `OPENAI_COMPATIBLE_URL` / `OPENAI_API_KEY` / `GEMMA_MODEL`.
+  - If the server is unreachable, a built-in heuristic labels the activity instead. These fallback labels are never saved as training data.
 - **Modern Responsive Web UI**: Dashboard with live bucket discovery, category distribution chart, confidence tuning slider, and real-time activity stream.
 
 ---
@@ -78,10 +75,10 @@ An intelligent, non-destructive activity classification and active learning pipe
 
 ## ⚡ How Gemma Runs
 
-Gemma runs **locally** — nothing leaves your machine with the default backends:
+Gemma runs **locally** — nothing leaves your machine with the default backend:
 - **`llama_server` (default)**: the app downloads a pinned, SHA256-verified `llama-server` binary from the official llama.cpp releases into `bin/` and manages the process itself (4 parallel slots). Label confidence comes from token log-probabilities.
-- **`local`**: weights (`.gguf`) are loaded in-process via `llama-cpp-python` (CPU, or GPU if available).
-- No Docker, Ollama, or third-party servers needed.
+- **`openai_compatible`**: point it at a server you run elsewhere, e.g. llama-server on a machine with more cores or a GPU.
+- No Docker or third-party services needed.
 - **Direct download from the script**:
   ```bash
   # Download Gemma 4 E2B Instruct GGUF weights directly into models/ (Standard Q4_K_M ~3.1 GB)
@@ -91,7 +88,6 @@ Gemma runs **locally** — nothing leaves your machine with the default backends
   uv run python main.py download-gemma --variant light
   ```
   *(You can also click the download button inside the Web UI Settings panel).*
-- **Pluggable Backends**: If preferred, you can also seamlessly switch backend to `ollama`, `gemini_api` (Google Cloud), `openai_compatible` (vLLM/LMStudio), or the built-in offline `heuristic` proxy.
 
 ---
 
@@ -171,7 +167,6 @@ This project uses, downloads, or talks to the following tools. Each keeps its ow
 |---|---|---|
 | [ActivityWatch](https://activitywatch.net/) | Accessed through its local REST API (no code bundled) | MPL-2.0 |
 | [llama.cpp](https://github.com/ggml-org/llama.cpp) (`llama-server`) | Prebuilt binary downloaded into `bin/` | MIT |
-| [llama-cpp-python](https://github.com/abetlen/llama-cpp-python) | In-process `local` backend | MIT |
 | [Gemma 4 E2B](https://huggingface.co/google/gemma-4-E2B-it) weights (GGUF by Unsloth) | Downloaded into `models/` | Apache-2.0 |
 | FastAPI, Pydantic, pytest | Python dependencies | MIT |
 | Uvicorn, scikit-learn, NumPy, SciPy, HTTPX, joblib | Python dependencies | BSD-3-Clause |
@@ -179,4 +174,4 @@ This project uses, downloads, or talks to the following tools. Each keeps its ow
 | Tailwind CSS, Chart.js | Web UI, loaded from CDN | MIT |
 | Font Awesome Free | Web UI icons, loaded from CDN | Icons CC BY 4.0, fonts SIL OFL 1.1, code MIT |
 
-Model weights and binaries are downloaded on demand and are not redistributed in this repository. If you switch to another model or backend (Ollama, Gemini API, other GGUFs), its license and terms apply instead.
+Model weights and binaries are downloaded on demand and are not redistributed in this repository. If you use another model (other GGUFs, or whatever an OpenAI-compatible server serves), its license and terms apply instead.

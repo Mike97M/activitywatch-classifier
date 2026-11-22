@@ -194,8 +194,11 @@ async function fetchStatus() {
     }
 
     // Pre-fill settings modal
-    document.getElementById("setting-gemma-backend").value = data.gemma_oracle.backend || "local";
-    document.getElementById("setting-ollama-host").value = data.gemma_oracle.ollama_host || "http://127.0.0.1:11434";
+    const backend = data.gemma_oracle.backend || "llama_server";
+    document.getElementById("setting-gemma-backend").value = backend;
+    document.getElementById("setting-openai-url").value = data.gemma_oracle.openai_url || "";
+    document.getElementById("setting-gemma-model").value = data.gemma_oracle.model_name || "";
+    toggleBackendOptions(backend);
     document.getElementById("setting-gemma-model").value = data.gemma_oracle.model_name || "google/gemma-4-E2B-it";
     document.getElementById("setting-categories").value = currentCategories.join(", ");
 
@@ -537,6 +540,11 @@ function handleTaskFailed(task) {
 // -------------------------------------------------------------
 // Pipeline Execution
 // -------------------------------------------------------------
+function toggleBackendOptions(backend) {
+  document.getElementById("local-options").classList.toggle("hidden", backend !== "llama_server");
+  document.getElementById("openai-options").classList.toggle("hidden", backend !== "openai_compatible");
+}
+
 async function runPipeline() {
   const checkboxes = document.querySelectorAll('input[name="source-bucket"]:checked');
   const sourceBucketIds = Array.from(checkboxes).map((cb) => cb.value);
@@ -1064,10 +1072,7 @@ function setupEventListeners() {
   });
 
   document.getElementById("setting-gemma-backend").addEventListener("change", (e) => {
-    const val = e.target.value;
-    document.getElementById("local-options").classList.toggle("hidden", val !== "local" && val !== "llama_server");
-    document.getElementById("ollama-options").classList.toggle("hidden", val !== "ollama");
-    document.getElementById("gemini-options").classList.toggle("hidden", val !== "gemini_api");
+    toggleBackendOptions(e.target.value);
   });
 
   document.getElementById("btn-download-gemma-ui").addEventListener("click", () => {
@@ -1079,9 +1084,9 @@ function setupEventListeners() {
 
   document.getElementById("btn-save-settings").addEventListener("click", async () => {
     const backend = document.getElementById("setting-gemma-backend").value;
-    const ollamaHost = document.getElementById("setting-ollama-host").value.trim();
+    const openaiUrl = document.getElementById("setting-openai-url").value.trim();
+    const openaiKey = document.getElementById("setting-openai-key").value.trim();
     const gemmaModel = document.getElementById("setting-gemma-model").value.trim();
-    const geminiKey = document.getElementById("setting-gemini-key").value.trim();
     const rawCats = document.getElementById("setting-categories").value;
     const categories = rawCats.split(",").map((s) => s.trim()).filter(Boolean);
 
@@ -1090,9 +1095,9 @@ function setupEventListeners() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         gemma_backend: backend,
-        ollama_host: ollamaHost,
-        gemma_model: gemmaModel,
-        gemini_api_key: geminiKey || undefined,
+        openai_url: openaiUrl || undefined,
+        openai_key: openaiKey || undefined,
+        gemma_model: gemmaModel || undefined,
         categories: categories.length > 0 ? categories : undefined,
       }),
     });

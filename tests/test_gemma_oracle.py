@@ -3,11 +3,16 @@
 import math
 
 from config import LLM_DEFAULT_CONFIDENCE
-from gemma_oracle import GemmaOracle, label_confidence_from_logprobs
+import pytest
+
+from gemma_oracle import HEURISTIC_BACKEND, GemmaOracle, label_confidence_from_logprobs
+
+# Nothing listens on the discard port: every call fails fast and exercises the heuristic fallback.
+OFFLINE_URL = "http://127.0.0.1:9/v1"
 
 
 def test_gemma_heuristic_classification():
-    oracle = GemmaOracle(backend="heuristic")
+    oracle = GemmaOracle(backend="openai_compatible", openai_url=OFFLINE_URL)
 
     # Coding signal
     res = oracle.classify_activity(app="foot", title="jdoe@laptop:~/Developement", url="")
@@ -29,7 +34,7 @@ def test_gemma_heuristic_classification():
 
 
 def test_gemma_json_parser():
-    oracle = GemmaOracle(backend="heuristic")
+    oracle = GemmaOracle(backend="openai_compatible", openai_url=OFFLINE_URL)
     tax = {
         "Development": ["Coding & IDE", "DevOps & Terminal"],
         "Communication": ["Team Chat", "Email"],
@@ -52,21 +57,34 @@ def test_gemma_json_parser():
     assert parsed2["subcategory"] == "Team Chat"
 
 
-def test_gemma_local_model_info_and_fallback(monkeypatch):
-    oracle = GemmaOracle(backend="local")
+def test_local_model_info_and_fallback_on_server_failure():
+    oracle = GemmaOracle(backend="llama_server")
     info = oracle.get_local_model_info()
     assert "available" in info
     assert "size_gb" in info
 
-    # If local llama.cpp returns None / fails, it should fall back safely to heuristics
-    monkeypatch.setattr(oracle, "_call_llama_cpp", lambda *args, **kwargs: None)
-    res = oracle.classify_activity(app="Code", title="test.py - Visual Studio Code", url="")
+    # If the LLM server is unreachable, results fall back to the heuristic and are tagged as such
+    offline = GemmaOracle(backend="openai_compatible", openai_url=OFFLINE_URL)
+    res = offline.classify_activity(app="Code", title="test.py - Visual Studio Code", url="")
     assert res["category"] == "Development"
-    assert res["confidence"] >= 0.9
+    assert res["backend"] == HEURISTIC_BACKEND
+
+
+def test_only_llama_server_and_openai_backends_are_accepted():
+    for removed in ("local", "llama_cpp", "ollama", "gemini_api", "heuristic"):
+        with pytest.raises(ValueError):
+            GemmaOracle(backend=removed)
+    oracle = GemmaOracle(backend="llama_server")
+    with pytest.raises(ValueError):
+        oracle.update_settings(backend="ollama", openai_url="http://changed/v1")
+    assert oracle.backend == "llama_server"
+    assert oracle.openai_url != "http://changed/v1"
+    oracle.update_settings(backend="openai-compatible")
+    assert oracle.backend == "openai_compatible"
 
 
 def test_gemma_batch_classification():
-    oracle = GemmaOracle(backend="heuristic")
+    oracle = GemmaOracle(backend="openai_compatible", openai_url=OFFLINE_URL)
     activities = [
         {"app": "foot", "title": "user@laptop:~", "url": ""},
         {"app": "brave", "title": "Pull Request #123 · github.com", "url": "https://github.com/ActivityWatch/activitywatch/pull/123"},
@@ -83,7 +101,7 @@ def test_gemma_batch_classification():
 
 
 def test_terminal_emulator_heuristics():
-    oracle = GemmaOracle(backend="heuristic")
+    oracle = GemmaOracle(backend="openai_compatible", openai_url=OFFLINE_URL)
     # Foot with user@laptop
     res = oracle.classify_activity(app="foot", title="<USER>@laptop:~", url="")
     assert res["category"] == "Development"
@@ -110,7 +128,6 @@ def test_label_confidence_from_logprobs_uses_only_label_values():
 
 
 def test_grammar_has_no_confidence_field():
-    oracle = GemmaOracle(backend="heuristic")
+    oracle = GemmaOracle(backend="openai_compatible", openai_url=OFFLINE_URL)
     tax = {"Development": ["Coding & IDE"]}
     assert "confidence" not in oracle._build_grammar(tax)
-    assert "confidence" not in oracle._build_grammar(tax, batch=True)

@@ -20,6 +20,7 @@ from config import (
     DEFAULT_TARGET_BUCKET_ID,
     DEFAULT_TARGET_BUCKET_TYPE,
     LABEL_MIN_CONFIDENCE,
+    LOGPROB_LABEL_MIN_CONFIDENCE,
     PIPELINE_STATS_FILE,
 )
 from gemma_oracle import HEURISTIC_BACKEND, GemmaOracle
@@ -509,7 +510,11 @@ class ClassificationPipeline:
                 # guess or a heuristic fallback (LLM down/timeout) must not become a permanent cached label.
                 if (
                     collect_training_data
-                    and conf >= LABEL_MIN_CONFIDENCE
+                    and conf >= (
+                        LOGPROB_LABEL_MIN_CONFIDENCE
+                        if gemma_res.get("confidence_source") == "logprobs"
+                        else LABEL_MIN_CONFIDENCE
+                    )
                     and backend_info != HEURISTIC_BACKEND
                 ):
                     added = self.classifier.add_training_sample(
@@ -717,6 +722,7 @@ class ClassificationPipeline:
             "gemma_oracle_calls": gemma_calls,
             "confidence_threshold": threshold,
             "label_min_confidence": LABEL_MIN_CONFIDENCE,
+            "logprob_label_min_confidence": LOGPROB_LABEL_MIN_CONFIDENCE,
             "new_training_samples_added": new_training_samples,
             "category_distribution": category_distribution,
             "subcategory_distribution": subcategory_distribution,

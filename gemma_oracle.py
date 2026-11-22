@@ -1,5 +1,6 @@
 """Gemma E2B Oracle: High-intelligence active classifier with hierarchical subcategories."""
 
+import concurrent.futures
 import json
 import logging
 import math
@@ -14,12 +15,10 @@ from config import (
     DEFAULT_LOCAL_GGUF_NAME,
     DEFAULT_LOCAL_GGUF_REPO,
     DEFAULT_TAXONOMY,
-    GEMINI_API_KEY,
     LIGHT_LOCAL_GGUF_NAME,
     LLM_DEFAULT_CONFIDENCE,
     LOCAL_GGUF_PATH,
     MODELS_DIR,
-    OLLAMA_HOST,
     OPENAI_API_KEY,
     OPENAI_COMPATIBLE_URL,
 )
@@ -30,6 +29,14 @@ logger = logging.getLogger("gemma_oracle")
 # Backend tag on every heuristic result (explicit backend or fallback after an LLM failure).
 # Its confidence is hard-coded, so the pipeline never learns from it.
 HEURISTIC_BACKEND = "gemma_heuristic_proxy"
+BACKENDS = ("llama_server", "openai_compatible")
+
+
+def _validate_backend(backend: str) -> str:
+    name = backend.lower().replace("-", "_")
+    if name not in BACKENDS:
+        raise ValueError(f"Unknown backend '{backend}'. Supported: {', '.join(BACKENDS)}")
+    return name
 
 
 def label_confidence_from_logprobs(tokens: Optional[List[Dict[str, Any]]]) -> Optional[float]:
@@ -83,23 +90,17 @@ class GemmaOracle:
         model_name: str = DEFAULT_GEMMA_MODEL,
         taxonomy: Optional[Dict[str, List[str]]] = None,
         categories: Optional[List[str]] = None,
-        ollama_host: str = OLLAMA_HOST,
-        gemini_api_key: str = GEMINI_API_KEY,
         openai_url: str = OPENAI_COMPATIBLE_URL,
         openai_key: str = OPENAI_API_KEY,
         local_gguf_path: Optional[str] = None,
     ):
-        self.backend = backend.lower()
+        self.backend = _validate_backend(backend)
         self.model_name = model_name
         self.taxonomy = taxonomy or dict(DEFAULT_TAXONOMY)
         self.categories = categories or list(self.taxonomy.keys())
-        self.ollama_host = ollama_host
-        self.gemini_api_key = gemini_api_key
         self.openai_url = openai_url
         self.openai_key = openai_key
         self.local_gguf_path = local_gguf_path or LOCAL_GGUF_PATH or None
-        self._llama_model = None
-        self._grammar_cache: Dict[Any, Any] = {}
 
     def find_local_model_path(self) -> Optional[Path]:
         """Locate downloaded GGUF weights in models directory or custom path."""
@@ -131,22 +132,21 @@ class GemmaOracle:
                 "path": str(model_path),
                 "filename": model_path.name,
                 "size_gb": round(size_gb, 2),
-                "loaded_in_memory": self._llama_model is not None,
             }
         return {
             "available": False,
             "path": None,
             "filename": None,
             "size_gb": 0.0,
-            "loaded_in_memory": False,
         }
 
     def update_settings(self, **kwargs):
-        """Update oracle settings at runtime."""
+        """Update oracle settings at runtime (an unknown backend raises before anything changes)."""
+        if kwargs.get("backend") is not None:
+            kwargs["backend"] = _validate_backend(kwargs["backend"])
         for k, v in kwargs.items():
             if hasattr(self, k) and v is not None:
                 setattr(self, k, v)
-        self.backend = self.backend.lower()
 
     def classify_activity(
         self,
@@ -167,125 +167,46 @@ class GemmaOracle:
         max_streams: int = 8,
         progress_callback: Optional[Callable[[int, int], None]] = None,
     ) -> List[Dict[str, Any]]:
-        """Classify a list of activities, using multi-stream parallel decoding with 1 memory pass for local Gemma."""
+        """Classify activities in parallel against llama-server or an OpenAI-compatible endpoint.
+
+        Any failure (server down, timeout, invalid label) falls back to the built-in heuristic,
+        tagged HEURISTIC_BACKEND so the pipeline never learns from it.
+        """
         if not activities:
             return []
         tax = taxonomy or self.taxonomy
-        if self.backend in ["local", "llama_cpp"]:
-            chunk_size = min(max(1, max_streams), 12)
-            results = []
-            for i in range(0, len(activities), chunk_size):
-                chunk = activities[i : i + chunk_size]
-                if len(chunk) == 1:
-                    a = chunk[0]
-                    prompt = self._build_prompt(a.get("app", ""), a.get("title", ""), a.get("url"), tax)
-                    res = self._call_llama_cpp(prompt, tax)
-                    if not res or res.get("category") not in tax:
-                        res = self._smart_heuristic_classify(a.get("app", ""), a.get("title", ""), a.get("url"), tax)
-                        res["reasoning"] = f"{res.get('reasoning', '')} (Fallback from local Gemma)"
-                    results.append(res)
-                else:
-                    batch_prompt = self._build_batch_prompt(chunk, tax)
-                    chunk_res_map = {}
-                    try:
-                        model_path = self.find_local_model_path()
-                        if not model_path:
-                            raise FileNotFoundError("Local Gemma model not found")
-                        if self._llama_model is None:
-                            from llama_cpp import Llama
-                            logger.info(f"Loading local Gemma model in-process from: {model_path}...")
-                            self._llama_model = Llama(
-                                model_path=str(model_path),
-                                n_ctx=4096,
-                                n_threads=4,
-                                verbose=False,
-                                flash_attn=True,
-                            )
-                        out = self._llama_model.create_chat_completion(
-                            messages=[
-                                {"role": "system", "content": "You are Gemma E2B, an expert activity classifier."},
-                                {"role": "user", "content": batch_prompt},
-                            ],
-                            temperature=0.1,
-                            max_tokens=len(chunk) * 40 + 16,
-                            grammar=self._grammar(tax, batch=True),
-                        )
-                        text = out["choices"][0]["message"]["content"]
-                        parsed_items = self._parse_llm_json_batch(text, tax)
-                        for item in parsed_items:
-                            item_id = item.get("id")
-                            if item_id is not None:
-                                item["backend"] = f"local_gguf_batch ({model_path.name})"
-                                chunk_res_map[item_id] = item
-                    except Exception as e:
-                        logger.error(f"Batch Gemma execution error: {e}")
+        workers = max(1, max_streams)
+        base_url = self.openai_url
 
-                    for c_idx, a in enumerate(chunk):
-                        act_id = a.get("id", c_idx)
-                        if act_id in chunk_res_map:
-                            results.append(chunk_res_map[act_id])
-                        elif c_idx in chunk_res_map:
-                            results.append(chunk_res_map[c_idx])
-                        else:
-                            h = self._smart_heuristic_classify(a.get("app", ""), a.get("title", ""), a.get("url"), tax)
-                            h["reasoning"] = f"{h.get('reasoning', '')} (Fallback from batch Gemma)"
-                            results.append(h)
+        if self.backend == "llama_server":
+            from llama_server_manager import llama_server
 
-                if progress_callback:
-                    progress_callback(len(results), len(activities))
-            return results
-
-        if self.backend in ["llama_server", "llama-server"]:
+            workers = min(workers, llama_server.n_parallel)
             try:
-                from llama_server_manager import llama_server
                 model_path = self.find_local_model_path()
                 if model_path:
-                    self.openai_url = llama_server.ensure_server(model_path)
+                    base_url = llama_server.ensure_server(model_path)
             except Exception as e:
                 logger.error(f"Failed to ensure llama-server: {e}")
 
-            import concurrent.futures
-            from llama_server_manager import llama_server
-            workers = min(max(1, max_streams), llama_server.n_parallel)
-            results = [None] * len(activities)
-
-            def _eval_one(idx, a):
-                prompt = self._build_prompt(a.get("app", ""), a.get("title", ""), a.get("url"), tax)
-                res = self._call_openai_compatible(prompt, tax)
-                if not res or res.get("category") not in tax:
-                    res = self._smart_heuristic_classify(a.get("app", ""), a.get("title", ""), a.get("url"), tax)
-                    res["reasoning"] = f"{res.get('reasoning', '')} (Fallback from llama-server)"
-                else:
-                    res["backend"] = "llama_server"
-                return idx, res
-
-            done_count = 0
-            with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
-                futures = [executor.submit(_eval_one, i, a) for i, a in enumerate(activities)]
-                for fut in concurrent.futures.as_completed(futures):
-                    i, res = fut.result()
-                    results[i] = res
-                    done_count += 1
-                    if progress_callback:
-                        progress_callback(done_count, len(activities))
-            return results
-
-        results = []
-        for a in activities:
-            prompt = self._build_prompt(a.get("app", ""), a.get("title", ""), a.get("url"), tax)
-            if self.backend == "ollama":
-                res = self._call_ollama(prompt, tax)
-            elif self.backend == "gemini_api":
-                res = self._call_gemini_api(prompt, tax)
-            elif self.backend == "openai_compatible":
-                res = self._call_openai_compatible(prompt, tax)
-            else:
-                res = self._smart_heuristic_classify(a.get("app", ""), a.get("title", ""), a.get("url"), tax)
-
+        def _eval_one(idx, a):
+            app, title, url = a.get("app", ""), a.get("title", ""), a.get("url")
+            res = self._call_openai_compatible(self._build_prompt(app, title, url, tax), tax, base_url)
             if not res or res.get("category") not in tax:
-                res = self._smart_heuristic_classify(a.get("app", ""), a.get("title", ""), a.get("url"), tax)
+                res = self._smart_heuristic_classify(app, title, url, tax)
                 res["reasoning"] = f"{res.get('reasoning', '')} (Fallback from {self.backend})"
-            results.append(res)
+            else:
+                res["backend"] = self.backend
+            return idx, res
+
+        results: List[Optional[Dict[str, Any]]] = [None] * len(activities)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = [executor.submit(_eval_one, i, a) for i, a in enumerate(activities)]
+            for done_count, fut in enumerate(concurrent.futures.as_completed(futures), 1):
+                i, res = fut.result()
+                results[i] = res
+                if progress_callback:
+                    progress_callback(done_count, len(activities))
         return results
 
     def _build_prompt(
@@ -336,61 +257,6 @@ class GemmaOracle:
             f'{{"category": "<Category>", "subcategory": "<Subcategory>"}}'
         )
 
-    def _build_batch_prompt(
-        self,
-        activities: List[Dict[str, Any]],
-        taxonomy: Dict[str, List[str]],
-    ) -> str:
-        tax_lines = []
-        for cat, subcats in taxonomy.items():
-            sub_str = ", ".join(subcats)
-            tax_lines.append(f"- {cat}: [{sub_str}]")
-        taxonomy_text = "\n".join(tax_lines)
-
-        items_text = []
-        for i, act in enumerate(activities):
-            act_id = act.get("id", i)
-            app = act.get("app") or "browser"
-            title = act.get("title") or "unknown"
-            url = act.get("url") or "none"
-            parsed_domain = ""
-            if url and url != "none":
-                try:
-                    from urllib.parse import urlparse
-                    test_url = url if "://" in url else f"https://{url}"
-                    p = urlparse(test_url)
-                    parsed_domain = p.netloc.lower().split(":")[0]
-                except Exception:
-                    parsed_domain = ""
-            items_text.append(
-                f"[Activity {i+1}] ID: {act_id} | Application: {app} | Window Title: {title} | Domain: {parsed_domain or 'none'} | URL: {url}"
-            )
-        activities_formatted = "\n".join(items_text)
-
-        return (
-            f"You are Gemma E2B, an expert activity classifier for ActivityWatch.\n"
-            f"Task: Categorize each of the following user activities into exactly ONE category and a matching subcategory from this taxonomy:\n\n"
-            f"{taxonomy_text}\n\n"
-            f"Classification Rules:\n"
-            f"1. Terminal emulators (foot, kitty, alacritty, ptyxis, konsole, gnome-terminal, xterm, wezterm, etc.) and shell prompts/sessions ('<user>@<host>', '~', bash, fish, zsh, tmux, ssh) MUST ALWAYS be categorized as category 'Development', subcategory 'DevOps & Terminal'. NEVER categorize terminal shells as 'System & Admin'.\n"
-            f"2. 'System & Admin' is reserved strictly for OS system settings dialogs, hardware monitors (htop, btop), local activity trackers (ActivityWatch web UI), and package management tools.\n"
-            f"3. For web browser activities, do NOT lazily dump activities into 'Browsing & Research > Search & Exploration'. Categorize based on the website domain, URL path, and actual function:\n"
-            f"   - Local dev servers (localhost, 127.0.0.1, 0.0.0.0, dev ports), admin consoles (Django site admin, scraper dashboards, Grafana), code repositories (GitHub, GitLab, 'user/repo' titles), and AI assistants/LLMs (Claude, ChatGPT, Gemini, AI Studio) MUST be categorized under 'Development' (DevOps & Terminal, Coding & IDE, or Git & Code Review).\n"
-            f"   - Local activity monitors (ActivityWatch web UI) belong to 'System & Admin > Hardware & System Monitor'.\n"
-            f"   - Webmail services and email inboxes accessed in a browser (Gmail, Proton Mail, Mailbox.org, Outlook/Office365, Yahoo Mail, Fastmail, webmail) MUST ALWAYS be categorized as 'Communication > Email'. NEVER categorize web email as 'Browsing & Research'.\n"
-            f"   - Project management (Jira, Linear), notes (Notion), and office/spreadsheets (Google Docs/Sheets, Grist) belong to 'Productivity & Planning'.\n"
-            f"   - Tech blogs, benchmarks (Artificial Analysis), engineering discussions (Hacker News), financial market charts, and research papers belong to 'Browsing & Research > Technical Articles & Papers'.\n"
-            f"   - Online shopping, retail, and store sites belong to 'Browsing & Research > Shopping & E-Commerce'.\n"
-            f"   - Blank new browser tabs ('New Tab', 'chrome://newtab', 'about:blank') belong to 'Uncategorized > General Activity'.\n"
-            f"   - ONLY actual web search engines (Google Search, DuckDuckGo, Brave Search) or exploratory general browsing belong to 'Browsing & Research > Search & Exploration'.\n\n"
-            f"Activities to categorize:\n"
-            f"{activities_formatted}\n\n"
-            f"Respond with ONLY a valid JSON array of objects, one for each activity in the exact same order, with no extra fields:\n"
-            f'[\n'
-            f'  {{"id": <ID>, "category": "<Category>", "subcategory": "<Subcategory>"}}\n'
-            f']'
-        )
-
     # ------------------------------------------------------------------
     # Constrained decoding
     # ------------------------------------------------------------------
@@ -399,7 +265,7 @@ class GemmaOracle:
         """GBNF literal matching a JSON string token (including its quotes)."""
         return json.dumps(f'"{value}"')
 
-    def _build_grammar(self, taxonomy: Dict[str, List[str]], batch: bool = False) -> str:
+    def _build_grammar(self, taxonomy: Dict[str, List[str]]) -> str:
         """GBNF grammar that forces valid JSON with a valid category/subcategory pair.
 
         Removes the need for markdown/preamble tokens and guarantees one of the taxonomy
@@ -407,7 +273,6 @@ class GemmaOracle:
         """
         q_cat = self._gbnf_string("category")
         q_sub = self._gbnf_string("subcategory")
-        q_id = self._gbnf_string("id")
 
         pairs = []
         for cat, subs in taxonomy.items():
@@ -425,26 +290,9 @@ class GemmaOracle:
         ]
         rules.extend(f"pair{i} ::= {pair}" for i, pair in enumerate(pairs))
 
-        if batch:
-            rules.append('root ::= "[" ws (item (ws "," ws item)*)? ws "]"')
-            rules.append(
-                f'item ::= "{{" ws {q_id} ws ":" ws [0-9]+ ws "," ws pair ws "}}"'
-            )
-        else:
-            rules.append('root ::= "{" ws pair ws "}"')
+        rules.append('root ::= "{" ws pair ws "}"')
 
         return "\n".join(rules)
-
-    def _grammar(self, taxonomy: Dict[str, List[str]], batch: bool = False):
-        """Compile (and cache) the GBNF grammar as a LlamaGrammar object."""
-        key = (batch, tuple((c, tuple(subs)) for c, subs in taxonomy.items()))
-        if key not in self._grammar_cache:
-            from llama_cpp import LlamaGrammar
-
-            self._grammar_cache[key] = LlamaGrammar.from_string(
-                self._build_grammar(taxonomy, batch), verbose=False
-            )
-        return self._grammar_cache[key]
 
     def _parse_llm_json(
         self, raw_text: str, taxonomy: Dict[str, List[str]]
@@ -493,167 +341,12 @@ class GemmaOracle:
             logger.warning(f"Error parsing LLM JSON: {e}. Raw was: {raw_text[:200]}")
         return None
 
-    def _parse_llm_json_batch(
-        self, raw_text: str, taxonomy: Dict[str, List[str]]
-    ) -> List[Dict[str, Any]]:
-        """Clean and extract a list of json objects from batch LLM generation."""
-        results = []
-        try:
-            cleaned = re.sub(r"^```(?:json)?\s*", "", raw_text.strip(), flags=re.MULTILINE)
-            cleaned = re.sub(r"```$", "", cleaned.strip(), flags=re.MULTILINE)
-
-            items = []
-            array_match = re.search(r"\[\s*\{.*?\}\s*\]", cleaned, re.DOTALL)
-            if array_match:
-                try:
-                    items = json.loads(array_match.group(0))
-                except Exception:
-                    pass
-
-            if not items:
-                for obj_match in re.finditer(r"\{[^{}]*\}", cleaned, re.DOTALL):
-                    try:
-                        items.append(json.loads(obj_match.group(0)))
-                    except Exception:
-                        continue
-
-            for item in items:
-                if not isinstance(item, dict):
-                    continue
-                item_id = item.get("id")
-                category_raw = str(item.get("category", "")).strip()
-                subcategory_raw = str(item.get("subcategory", "")).strip()
-
-                matched_cat = next(
-                    (c for c in taxonomy.keys() if c.lower() == category_raw.lower()), None
-                )
-                if not matched_cat:
-                    continue
-                valid_subs = taxonomy[matched_cat]
-                matched_sub = next(
-                    (s for s in valid_subs if s.lower() == subcategory_raw.lower()), None
-                )
-                if not matched_sub:
-                    matched_sub = next(
-                        (s for s in valid_subs if subcategory_raw.lower() in s.lower()),
-                        valid_subs[0] if valid_subs else "General",
-                    )
-                results.append({
-                    "id": item_id,
-                    "category": matched_cat,
-                    "subcategory": matched_sub,
-                    "full_category": f"{matched_cat} > {matched_sub}",
-                    "confidence": LLM_DEFAULT_CONFIDENCE,
-                    "reasoning": item.get("reasoning", "Classified by Gemma E2B"),
-                    "backend": self.backend,
-                })
-        except Exception as e:
-            logger.warning(f"Error parsing batch LLM JSON: {e}")
-        return results
-
-    def _call_llama_cpp(self, prompt: str, taxonomy: Dict[str, List[str]], max_tokens: int = 48) -> Dict[str, Any]:
-        """Run Gemma locally directly in-process via llama-cpp-python."""
-        model_path = self.find_local_model_path()
-        if not model_path:
-            logger.warning(
-                "Local Gemma GGUF model not found in models/. "
-                "Run `uv run python main.py download-gemma` to download weights directly. "
-                "Gracefully falling back to heuristic oracle."
-            )
-            return {}
-
-        try:
-            if not self._llama_model:
-                from llama_cpp import Llama
-
-                logger.info(f"Loading local Gemma model in-process from: {model_path}...")
-                self._llama_model = Llama(
-                    model_path=str(model_path),
-                    n_ctx=2048,
-                    n_threads=4,
-                    verbose=False,
-                    flash_attn=True,
-                )
-                logger.info("Local Gemma model loaded successfully.")
-
-            output = self._llama_model.create_chat_completion(
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "You are Gemma E2B, an expert activity classifier.",
-                    },
-                    {"role": "user", "content": prompt},
-                ],
-                temperature=0.1,
-                max_tokens=max_tokens,
-                grammar=self._grammar(taxonomy, batch=False),
-            )
-            text = output["choices"][0]["message"]["content"]
-            parsed = self._parse_llm_json(text, taxonomy)
-            if parsed:
-                parsed["backend"] = f"local_gguf ({model_path.name})"
-                return parsed
-        except Exception as e:
-            logger.error(f"Local llama-cpp execution error: {e}")
-        return {}
-
-    def _call_ollama(self, prompt: str, taxonomy: Dict[str, List[str]]) -> Dict[str, Any]:
-        """Query Ollama server."""
-        try:
-            url = f"{self.ollama_host.rstrip('/')}/api/generate"
-            payload = {
-                "model": self.model_name or "gemma-4-e2b",
-                "prompt": prompt,
-                "stream": False,
-                "format": "json",
-                "options": {"num_predict": 48},
-            }
-            with httpx.Client(timeout=15.0) as client:
-                resp = client.post(url, json=payload)
-                resp.raise_for_status()
-                response_text = resp.json().get("response", "")
-                parsed = self._parse_llm_json(response_text, taxonomy)
-                if parsed:
-                    return parsed
-        except Exception as e:
-            logger.error(f"Ollama call failed: {e}")
-        return {}
-
-    def _call_gemini_api(self, prompt: str, taxonomy: Dict[str, List[str]]) -> Dict[str, Any]:
-        """Query Google Gemini API endpoint."""
-        if not self.gemini_api_key:
-            logger.warning("No GEMINI_API_KEY set.")
-            return {}
-        try:
-            url = (
-                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
-                f"?key={self.gemini_api_key}"
-            )
-            payload = {
-                "contents": [{"parts": [{"text": prompt}]}],
-                "generationConfig": {
-                    "response_mime_type": "application/json",
-                    "maxOutputTokens": 48,
-                },
-            }
-            with httpx.Client(timeout=15.0) as client:
-                resp = client.post(url, json=payload)
-                resp.raise_for_status()
-                data = resp.json()
-                text = data["candidates"][0]["content"]["parts"][0]["text"]
-                parsed = self._parse_llm_json(text, taxonomy)
-                if parsed:
-                    return parsed
-        except Exception as e:
-            logger.error(f"Gemini API call failed: {e}")
-        return {}
-
     def _call_openai_compatible(
-        self, prompt: str, taxonomy: Dict[str, List[str]]
+        self, prompt: str, taxonomy: Dict[str, List[str]], base_url: Optional[str] = None
     ) -> Dict[str, Any]:
         """Query any OpenAI-compatible server (llama-server, vLLM, LMStudio, LocalAI)."""
         try:
-            base = (self.openai_url or "http://127.0.0.1:8088/v1").rstrip("/")
+            base = (base_url or self.openai_url or "http://127.0.0.1:8088/v1").rstrip("/")
             url = f"{base}/chat/completions"
             headers = {}
             if self.openai_key:
@@ -665,7 +358,7 @@ class GemmaOracle:
                 "max_tokens": 48,
                 "logprobs": True,
             }
-            if self.backend in ("llama_server", "llama-server"):
+            if self.backend == "llama_server":
                 # llama-server accepts GBNF directly; this also avoids its json_schema
                 # sampler conflict with --reasoning-budget 0.
                 payload["grammar"] = self._build_grammar(taxonomy)
@@ -684,6 +377,7 @@ class GemmaOracle:
                     )
                     if conf is not None:
                         parsed["confidence"] = round(conf, 4)
+                        parsed["confidence_source"] = "logprobs"
                     return parsed
         except Exception as e:
             logger.error(f"OpenAI-compatible call failed: {e}")
