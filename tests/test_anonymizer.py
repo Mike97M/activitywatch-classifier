@@ -208,3 +208,12 @@ def test_private_terms_file(tmp_path, monkeypatch):
     a = anon_mod.TextAnonymizer(hostnames=[])
     assert a.sanitize_title("Contract - Jane Q Public.pdf") == "Contract - <USER>.pdf"
     assert a.sanitize_title("j.public - Mail - mailbox Suite") == "<USER> - Mail - mailbox Suite"
+
+
+def test_encoded_and_digit_glued_identifiers():
+    a = TextAnonymizer(extra_usernames=[], extra_terms=["Jane Public", "janep"], hostnames=[])
+    assert "janep" not in a.sanitize_title("title:1997janep claim your reward").lower()
+    assert "janep" not in a.sanitize_title("hello janep1997").lower()
+    assert "Public" not in a.sanitize_title("Agreement%20-%20Jane%20Public%20.pdf")
+    assert "example.org" not in a.sanitize_title("registered=jane.p%40example.org")
+    assert "jane" not in a.sanitize_url("https://login.example.com/?login_hint=jane%40example.org&next=x").lower()

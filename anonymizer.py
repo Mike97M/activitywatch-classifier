@@ -150,15 +150,16 @@ class TextAnonymizer:
         def _alternation(terms: Set[str]) -> Optional[re.Pattern]:
             if not terms:
                 return None
-            # Longest first; whitespace inside multi-word terms matches any whitespace/separator
-            parts = [r"[\s._-]+".join(map(re.escape, t.split())) for t in sorted(terms, key=len, reverse=True)]
-            return re.compile(rf"(?<![\w]){'(?:' + '|'.join(parts) + ')'}(?![\w])", re.IGNORECASE)
+            # Longest first; the space in multi-word terms also matches "." "_" "-" "+" and URL-encoded "%20".
+            # Letter-only boundaries, so handles glued to digits ("1497jdoe", "jdoe1497") are caught too.
+            parts = [r"(?:[\s._+-]|%20)+".join(map(re.escape, t.split())) for t in sorted(terms, key=len, reverse=True)]
+            return re.compile(rf"(?<![a-z]){'(?:' + '|'.join(parts) + ')'}(?![a-z])", re.IGNORECASE)
 
         self._user_re = _alternation(self.usernames | self.extra_terms)
         self._host_re = _alternation(self.hostnames)
 
         # --- Patterns (all case-insensitive: stored feature text is lowercased) ---
-        self._email_re = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
+        self._email_re = re.compile(r"\b[A-Za-z0-9._%+-]+(?:@|%40)[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")  # also URL-encoded "@"
         self._ipv4_re = re.compile(r"\b(?!(?:127\.0\.0\.1|0\.0\.0\.0)\b)(?:\d{1,3}\.){3}\d{1,3}\b")
         self._ipv6_candidate_re = re.compile(r"(?<![\w:])(?:[0-9a-f]{0,4}:){2,7}[0-9a-f]{0,4}(?![\w:])", re.I)
         self._mac_re = re.compile(r"\b(?:[0-9a-f]{2}[:-]){5}[0-9a-f]{2}\b", re.I)
@@ -216,7 +217,8 @@ class TextAnonymizer:
             "credential", "credentials", "state", "nonce", "csrf", "xsrf", "_csrf",
             "ticket", "authuser", "client_id", "client_secret", "phpsessid", "jsessionid",
             "aspsessionid", "samlart", "relaystate", "assertion", "otp", "totp", "pin",
-            "passcode", "user_id", "userid", "account_id", "email", "phone",
+            "passcode", "user_id", "userid", "account_id", "email", "phone", "username", "login",
+            "login_hint", "user", "registered",
         }
 
     # ------------------------------------------------------------------
