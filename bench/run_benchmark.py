@@ -10,6 +10,7 @@ Reported separately:
     uv run python bench/run_benchmark.py                    # production JSON mode
     uv run python bench/run_benchmark.py --mode options     # single-pass option-probability readout
     uv run python bench/run_benchmark.py --corrections      # also use your human corrections (stay local)
+    uv run python bench/run_benchmark.py --model models/gemma-4-E4B-it-Q4_K_M.gguf   # any other GGUF
 
 Synthetic cases live in bench/cases.jsonl. Per-item results go to data/benchmark_results_<mode>.json (git-ignored).
 Activity titles are printed for synthetic cases only, never for your own corrections.
@@ -107,6 +108,7 @@ def main():
     ap.add_argument("--mode", choices=("json", "options", "options-short"), default="json")
     ap.add_argument("--corrections", action="store_true", help="add your human corrections as cases")
     ap.add_argument("--streams", type=int, default=4)
+    ap.add_argument("--model", type=Path, help="GGUF to serve instead of the app's default model")
     ap.add_argument("--cases", type=Path, default=CASES_PATH,
                     help="JSONL of {app,title,url,expected}; anything but bench/cases.jsonl is treated as private")
     args = ap.parse_args()
@@ -114,6 +116,11 @@ def main():
 
     cases = load_cases(args.corrections, args.cases)
     oracle = GemmaOracle(backend="llama_server")
+    if args.model:
+        if not args.model.is_file():
+            sys.exit(f"model file not found: {args.model}")
+        oracle.local_gguf_path = str(args.model)
+    model_name = oracle.find_local_model_path().name
     inputs = [production_input(c) for c in cases]
     rules = []
     for clean in inputs:
@@ -154,7 +161,7 @@ def main():
     for c in cases:
         sources[c["source"]] += 1
 
-    print(f"\nmode={args.mode}  cases={n} ({dict(sources)})  {seconds / n:.2f} s/item  heuristic fallbacks={fallbacks}")
+    print(f"\nmodel={model_name}  mode={args.mode}  cases={n} ({dict(sources)})  {seconds / n:.2f} s/item  heuristic fallbacks={fallbacks}")
     print(f"LLM, all cases:            {acc(range(n), llm_pred)}")
     print(f"LLM, rule-miss cases:      {acc(miss_idx, llm_pred)}   <- the LLM's real workload")
     print(f"Rules, where they fire:    {acc(hit_idx, lambda i: rules[i])}")
@@ -178,9 +185,10 @@ def main():
         if llm[i][0] != exp[i] and cases[i]["source"] == "synthetic":
             print(f"  #{i:<3d} {cases[i]['app'][:14]:<14} {cases[i]['title'][:46]:<46} want {exp[i]}  got {llm[i][0]} ({llm[i][1]:.2f})")
 
-    results_path = DATA_DIR / f"benchmark_results_{args.mode}.json"
+    suffix = f"_{args.model.stem}" if args.model else ""
+    results_path = DATA_DIR / f"benchmark_results_{args.mode}{suffix}.json"
     results_path.write_text(json.dumps({
-        "mode": args.mode, "seconds_per_item": seconds / n, "n": n,
+        "mode": args.mode, "model": model_name, "seconds_per_item": seconds / n, "n": n,
         "items": [{"index": i, "source": cases[i]["source"], "expected": exp[i], "rule": rules[i],
                    "llm": llm[i][0], "confidence": llm[i][1]} for i in range(n)],
     }, indent=2), encoding="utf-8")
