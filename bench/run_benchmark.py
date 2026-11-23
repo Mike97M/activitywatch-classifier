@@ -41,8 +41,9 @@ LETTERS = "ABCDEFGHIJKLMNOP"
 THRESHOLDS = (0.5, 0.7, 0.9, 0.95)
 
 
-def load_cases(with_corrections: bool):
-    cases = [dict(json.loads(line), source="synthetic") for line in CASES_PATH.open(encoding="utf-8") if line.strip()]
+def load_cases(with_corrections: bool, path: Path = CASES_PATH):
+    source = "synthetic" if path == CASES_PATH else "real"  # titles of real cases are never printed
+    cases = [dict(json.loads(line), source=source) for line in path.open(encoding="utf-8") if line.strip()]
     if with_corrections and TRAINING_DATA_PATH.exists():
         field = re.compile(r"(?:^|\s)(app|title|url):(.*?)(?=\s(?:package|domain|root_domain|path|title|url):|$)", re.S)
         for line in TRAINING_DATA_PATH.open(encoding="utf-8"):
@@ -64,8 +65,12 @@ def production_input(case):
     return clean
 
 
-def option_readout(oracle, url, clean):
-    """Two lettered passes (category, then subcategory); confidence = P(cat) * P(sub | cat)."""
+def option_readout(oracle, url, clean, short=False):
+    """Two lettered passes (category, then subcategory); confidence = P(cat) * P(sub | cat).
+
+    short=True lists bare category names: the taxonomy is already in the (cached) prompt prefix,
+    so the uncached part after the activity shrinks from ~250 to ~110 tokens.
+    """
     p = oracle._build_prompt(clean.get("app", ""), clean.get("title", ""), clean.get("url"), DEFAULT_TAXONOMY)
     head = p.split("Respond with ONLY")[0].rstrip()
 
@@ -87,7 +92,8 @@ def option_readout(oracle, url, clean):
         return [x / sum(w) for x in w]
 
     cats = list(DEFAULT_TAXONOMY)
-    pc = read("Which category best describes this activity?", [f"{k} ({', '.join(v)})" for k, v in DEFAULT_TAXONOMY.items()])
+    cat_options = cats if short else [f"{k} ({', '.join(v)})" for k, v in DEFAULT_TAXONOMY.items()]
+    pc = read("Which category best describes this activity?", cat_options)
     ci = max(range(len(cats)), key=pc.__getitem__)
     subs = DEFAULT_TAXONOMY[cats[ci]]
     if len(subs) == 1:
@@ -99,13 +105,15 @@ def option_readout(oracle, url, clean):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--mode", choices=("json", "options"), default="json")
+    ap.add_argument("--mode", choices=("json", "options", "options-short"), default="json")
     ap.add_argument("--corrections", action="store_true", help="add your human corrections as cases")
     ap.add_argument("--streams", type=int, default=4)
+    ap.add_argument("--cases", type=Path, default=CASES_PATH,
+                    help="JSONL of {app,title,url,expected}; anything but bench/cases.jsonl is treated as private")
     args = ap.parse_args()
     logging.basicConfig(level=logging.WARNING)
 
-    cases = load_cases(args.corrections)
+    cases = load_cases(args.corrections, args.cases)
     oracle = GemmaOracle(backend="llama_server")
     inputs = [production_input(c) for c in cases]
     rules = []
@@ -122,7 +130,8 @@ def main():
         else:
             url = llama_server.ensure_server(oracle.find_local_model_path())
             with concurrent.futures.ThreadPoolExecutor(args.streams) as ex:
-                llm = [(*x, "options") for x in ex.map(lambda c: option_readout(oracle, url, c), inputs)]
+                short = args.mode == "options-short"
+                llm = [(*x, args.mode) for x in ex.map(lambda c: option_readout(oracle, url, c, short), inputs)]
         seconds = time.time() - t0
     finally:
         llama_server.stop()
@@ -165,7 +174,7 @@ def main():
     for k, v in sorted(by_cat.items(), key=lambda kv: sum(kv[1]) / len(kv[1])):
         print(f"  {k:<26} {sum(v):3d}/{len(v):<3d}")
 
-    print("\nLLM misses (synthetic cases; your corrections are counted above but never printed):")
+    print("\nLLM misses (synthetic cases only; real cases and your corrections are counted above but never printed):")
     for i in range(n):
         if llm[i][0] != exp[i] and cases[i]["source"] == "synthetic":
             print(f"  #{i:<3d} {cases[i]['app'][:14]:<14} {cases[i]['title'][:46]:<46} want {exp[i]}  got {llm[i][0]} ({llm[i][1]:.2f})")

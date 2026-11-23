@@ -153,6 +153,8 @@ uv run python bench/run_benchmark.py --mode options  # option-probability readou
 uv run python bench/run_benchmark.py --corrections   # also use your own UI corrections (stay local)
 ```
 
+`bench/decision_models.py` runs small "decision" classifiers (JevK5-Lite, Laya) on the same cases and inputs; see its docstring for the separate environment it needs (torch/transformers are not app dependencies).
+
 ### 6. Automated Tests
 
 ```bash
