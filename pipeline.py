@@ -1,10 +1,12 @@
 """Pipeline coordinating ActivityWatch buckets, AFK filtering, FastClassifier, and Gemma Oracle with hierarchical subcategories."""
 
 import bisect
+from collections import defaultdict
 from datetime import timedelta
 import json
 import logging
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple
+import re
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
 from afk_filter import (
     filter_events_by_afk,
     parse_iso_timestamp,
@@ -27,17 +29,20 @@ from gemma_oracle import HEURISTIC_BACKEND, GemmaOracle
 
 logger = logging.getLogger("pipeline")
 
-_BROWSER_APP_HINTS = ("brave", "firefox", "chromium", "chrome", "edge", "opera", "vivaldi", "zen", "browser")
 _URL_MATCH_SLACK = timedelta(seconds=2)
+# Browser names as whole words: "Brave-browser", "org.mozilla.firefox", "org.chromium.Chromium" match,
+# "sqlitebrowser" (DB Browser for SQLite) does not.
+_BROWSER_RE = re.compile(r"(?<![a-z])(brave|firefox|librewolf|chromium|chrome|msedge|edge|opera|vivaldi|zen)(?![a-z])")
+_BROWSER_FAMILY = {"chromium": "chrome", "msedge": "edge", "librewolf": "firefox"}
 
 
-def attach_browser_urls(events: List[Dict[str, Any]], web_events: List[Dict[str, Any]]) -> None:
-    """Give browser window events without a URL the URL of the web-watcher tab active at that time.
+def browser_slug(name: str) -> Optional[str]:
+    """'brave', 'firefox', 'chrome', ... for a browser app name or a web-watcher bucket id, else None."""
+    m = _BROWSER_RE.search((name or "").lower())
+    return _BROWSER_FAMILY.get(m.group(1), m.group(1)) if m else None
 
-    A tab matches if it overlaps the window event or starts within 2s of it; the latest-starting
-    match wins. Web events are sorted once and searched with bisect instead of scanned per event.
-    ponytail: the backward scan is bounded by the longest web event, so one hours-long tab widens it.
-    """
+
+def _url_index(web_events: List[Dict[str, Any]]):
     parsed: List[Tuple[Any, Any, str]] = []
     for wb_ev in web_events:
         url = (wb_ev.get("data") or {}).get("url")
@@ -49,30 +54,58 @@ def attach_browser_urls(events: List[Dict[str, Any]], web_events: List[Dict[str,
         except Exception:
             continue
     if not parsed:
-        return
+        return None
     parsed.sort(key=lambda x: x[0])
-    starts = [p[0] for p in parsed]
     lookback = max(max(et - st for st, et, _ in parsed), _URL_MATCH_SLACK)
+    return [p[0] for p in parsed], parsed, lookback
+
+
+def _find_url(index, ev_st, ev_et) -> Optional[str]:
+    starts, parsed, lookback = index
+    j = bisect.bisect_left(starts, max(ev_et, ev_st + _URL_MATCH_SLACK)) - 1
+    while j >= 0 and starts[j] > ev_st - lookback:
+        wb_st, wb_et, url = parsed[j]
+        if max(ev_st, wb_st) < min(ev_et, wb_et) or abs(ev_st - wb_st) < _URL_MATCH_SLACK:
+            return url
+        j -= 1
+    return None
+
+
+def attach_browser_urls(
+    events: List[Dict[str, Any]],
+    web_events: Union[Dict[str, List[Dict[str, Any]]], List[Dict[str, Any]]],
+) -> None:
+    """Give browser window events without a URL the URL of the web-watcher tab active at that time.
+
+    `web_events` maps web-watcher bucket id -> events, so a Firefox window only gets Firefox tabs
+    (a plain list, or a bucket without a browser name, applies to every browser).
+    A tab matches if it overlaps the window event or starts within 2s of it; the latest-starting
+    match wins. Web events are sorted once and searched with bisect instead of scanned per event.
+    ponytail: the backward scan is bounded by the longest web event, so one hours-long tab widens it.
+    """
+    by_slug: Dict[Optional[str], List[Dict[str, Any]]] = defaultdict(list)
+    for bucket_id, evs in (web_events.items() if isinstance(web_events, dict) else [("", web_events)]):
+        by_slug[browser_slug(bucket_id)].extend(evs)
+    indexes = {slug: idx for slug, evs in by_slug.items() if (idx := _url_index(evs))}
+    if not indexes:
+        return
 
     for ev in events:
         ev_data = ev.get("data", {})
         if ev_data.get("url"):
             continue
-        app = str(ev_data.get("app") or "").lower()
-        if not any(b in app for b in _BROWSER_APP_HINTS):
+        slug = browser_slug(str(ev_data.get("app") or ""))
+        if slug is None:
             continue
         try:
             ev_st = parse_iso_timestamp(ev["timestamp"])
             ev_et = ev_st + timedelta(seconds=float(ev.get("duration", 0.0)))
         except Exception:
             continue
-        j = bisect.bisect_left(starts, max(ev_et, ev_st + _URL_MATCH_SLACK)) - 1
-        while j >= 0 and starts[j] > ev_st - lookback:
-            wb_st, wb_et, url = parsed[j]
-            if max(ev_st, wb_st) < min(ev_et, wb_et) or abs(ev_st - wb_st) < _URL_MATCH_SLACK:
+        for key in (slug, None):  # own browser's watcher first, then browser-agnostic buckets
+            if key in indexes and (url := _find_url(indexes[key], ev_st, ev_et)):
                 ev_data["url"] = url
                 break
-            j -= 1
 
 
 class ClassificationPipeline:
@@ -278,7 +311,6 @@ class ClassificationPipeline:
 
             # Browser URL Enrichment: If source bucket is a window watcher, find corresponding
             # web buckets for the same device/hostname and associate active URLs with browser window events.
-            all_source_web_events = []
             for wb in web_buckets:
                 if wb not in web_events_cache:
                     try:
@@ -286,10 +318,9 @@ class ClassificationPipeline:
                     except Exception as e:
                         logger.warning(f"Could not fetch web events from {wb}: {e}")
                         web_events_cache[wb] = []
-                all_source_web_events.extend(web_events_cache[wb])
 
-            if all_source_web_events and events:
-                attach_browser_urls(events, all_source_web_events)
+            if web_buckets and events:
+                attach_browser_urls(events, {wb: web_events_cache[wb] for wb in web_buckets})
 
             for event in events:
                 all_events_to_classify.append((source_id, event))

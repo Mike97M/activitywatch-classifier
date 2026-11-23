@@ -502,3 +502,26 @@ def test_logprob_confidence_uses_stricter_label_threshold():
 
         assert stats["new_training_samples_added"] == 1
         assert "budget" in classifier.training_samples[0]["text"]
+
+
+def test_urls_come_from_the_same_browser_and_not_from_sqlitebrowser():
+    from pipeline import attach_browser_urls, browser_slug
+
+    assert browser_slug("Brave-browser") == "brave"
+    assert browser_slug("org.mozilla.firefox") == "firefox"
+    assert browser_slug("org.chromium.Chromium") == browser_slug("aw-watcher-web-chrome_host") == "chrome"
+    assert browser_slug("sqlitebrowser") is None and browser_slug("zenity") is None
+
+    web = {
+        "aw-watcher-web-brave_host": [{"timestamp": "2026-11-05T10:00:00Z", "duration": 600.0,
+                                       "data": {"url": "https://brave-tab.example"}}],
+        "aw-watcher-web-firefox_host": [{"timestamp": "2026-11-05T10:00:00Z", "duration": 600.0,
+                                         "data": {"url": "https://firefox-tab.example"}}],
+    }
+    at = "2026-11-05T10:01:00Z"
+    events = [{"timestamp": at, "duration": 5.0, "data": {"app": a}}
+              for a in ("Brave-browser", "org.mozilla.firefox", "org.chromium.Chromium", "sqlitebrowser")]
+    attach_browser_urls(events, web)
+    assert [e["data"].get("url") for e in events] == [
+        "https://brave-tab.example", "https://firefox-tab.example", None, None,
+    ]
