@@ -45,6 +45,9 @@ DEFAULT_TAXONOMY: Dict[str, List[str]] = {
         "Email",
         "Calls & Meetings",
     ],
+    "Career & Jobs": [
+        "Job Search & Applications",
+    ],
     "Education & Learning": [
         "Language Learning",
         "Courses & Tutorials",
@@ -63,6 +66,12 @@ DEFAULT_TAXONOMY: Dict[str, List[str]] = {
     "Health & Fitness": [
         "Workouts & Gym",
         "Health Trackers",
+        "Healthcare & Medical",
+    ],
+    "Home & Personal Admin": [
+        "Housing & Real Estate",
+        "Government & Paperwork",
+        "Smart Home & Devices",
     ],
     "Browsing & Research": [
         "Search & Exploration",

@@ -304,3 +304,27 @@ def test_rules_fixed_by_benchmark_v2():
     assert rule("firefox", "Show HN | Hacker News", "https://news.ycombinator.com/item?id=1") == (
         "Browsing & Research > Technical Articles & Papers"
     )
+
+
+def test_rules_fixed_by_real_data_review():
+    def rule(app, title, url=""):
+        r = FastClassifier.match_rules(FastClassifier.extract_features({"app": app, "title": title, "url": url}))
+        return " > ".join(r) if r else None
+
+    # a project folder named after ActivityWatch is not the ActivityWatch monitor
+    assert rule("foot", "activitywatch-classifier: limactl - shell") == "Development > DevOps & Terminal"
+    assert rule("foot", "btop") == "System & Admin > Hardware & System Monitor"
+    assert rule("foot", "sudo zypper dup") == "System & Admin > Package Management"
+    # cloud consoles are infrastructure, not shopping / search
+    assert rule("Brave-browser", "Create user | IAM", "https://us-east-1.console.aws.amazon.com/iam/home") == (
+        "Development > DevOps & Terminal")
+    assert rule("Brave-browser", "Credentials", "https://console.cloud.google.com/apis/credentials") == (
+        "Development > DevOps & Terminal")
+    assert rule("Brave-browser", "Amazon.de", "https://www.amazon.de/") == "Browsing & Research > Shopping & E-Commerce"
+    # job search
+    jobs = "Career & Jobs > Job Search & Applications"
+    assert rule("Brave-browser", "Apply", "https://jobs.lever.co/acme/123/apply") == jobs
+    assert rule("Brave-browser", "Careers", "https://www.acme.com/careers/data-engineer") == jobs
+    assert rule("Brave-browser", "Jobs | LinkedIn", "https://www.linkedin.com/jobs/search") == jobs
+    assert rule("Brave-browser", "Feed | LinkedIn", "https://www.linkedin.com/feed/") == "Social Media > LinkedIn & Professional"
+    assert rule("Brave-browser", "Build", "https://github.com/acme/api/actions/runs/1/job/2") != jobs

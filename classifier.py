@@ -44,8 +44,18 @@ _DOMAIN_OVERRIDES = [
     (re.compile(r"(^|\.)docs\.google\.com$", re.I), "Productivity & Planning", "Docs & Spreadsheets"),
     (re.compile(r"(^|\.)music\.youtube\.com$", re.I), "Media & Entertainment", "Music & Audio"),
     (re.compile(r"(^|\.)read\.amazon\.[a-z.]+$", re.I), "Education & Learning", "Reading & Reference"),
+    (re.compile(r"(^|\.)console\.aws\.amazon\.com$", re.I), "Development", "DevOps & Terminal"),
+    (re.compile(r"^console\.cloud\.google\.com$", re.I), "Development", "DevOps & Terminal"),
     (re.compile(r"(^|\.)(localhost|127\.0\.0\.1|0\.0\.0\.0)(:\d+)?$", re.I), "Development", "Coding & IDE"),
 ]
+
+# In a terminal only real system tools are System & Admin; a project folder named
+# "activitywatch-classifier" in the title must not match the ActivityWatch monitor rule.
+_TERMINAL_SYSTEM_TOOLS = [
+    (re.compile(r"\b(htop|btop|bpytop|top|nvtop|glances|iotop|s-tui)\b", re.I), ("System & Admin", "Hardware & System Monitor")),
+    (re.compile(r"\b(zypper|apt|apt-get|dnf|yum|pacman|yay|paru|flatpak|snap|brew|rpm-ostree)\b", re.I), ("System & Admin", "Package Management")),
+]
+_JOB_SUBDOMAINS = ("jobs.", "careers.", "career.", "job-boards.", "apply.")
 
 # A chat app's window title can say it is a call ("Meeting with Design | Microsoft Teams", "Huddle").
 _MEETING_TITLE_RE = re.compile(r"\b(meeting|meet|call|huddle|webinar|standup)\b", re.I)
@@ -357,15 +367,22 @@ class FastClassifier:
             return ("System & Admin", "Hardware & System Monitor")
 
         if app in TERMINAL_APPS:
-            match = _seed_match(title)
-            if match and match[0] == "System & Admin":
-                return match
+            for pattern, label in _TERMINAL_SYSTEM_TOOLS:
+                if pattern.search(title):
+                    return label
             return ("Development", "DevOps & Terminal")
 
         if domain:
             for pattern, cat, sub in _DOMAIN_OVERRIDES:
                 if pattern.search(domain):
                     return (cat, sub)
+            first_path = (fields.get("path") or "").split(" ")[0]
+            if (
+                domain.startswith(_JOB_SUBDOMAINS)
+                or first_path in ("careers", "career")
+                or (root_domain in ("linkedin.com", "finn.no") and first_path in ("jobs", "job"))
+            ):
+                return ("Career & Jobs", "Job Search & Applications")
             if domain not in GENERIC_DOMAINS and not domain.startswith(
                 ("127.", "192.168.", "10.", "0.0.0.0")
             ):

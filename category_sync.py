@@ -16,6 +16,8 @@ CATEGORY_COLORS: Dict[str, str] = {
     "Finance & Banking": "#10b981",    # Emerald
     "Travel & Navigation": "#f97316",  # Bright Orange
     "Health & Fitness": "#ec4899",     # Pink
+    "Career & Jobs": "#0f766e",        # Deep Teal
+    "Home & Personal Admin": "#b45309", # Burnt Amber
     "Browsing & Research": "#35495E",  # AW Navy
     "Social Media": "#f43f5e",         # Rose
     "Media & Entertainment": "#eab308",# Amber
@@ -61,7 +63,16 @@ SUBCATEGORY_COLORS: Dict[Tuple[str, str], str] = {
     # Health & Fitness (Hot Pink & Magenta)
     ("Health & Fitness", "Workouts & Gym"): "#ec4899",             # Hot Pink
     ("Health & Fitness", "Health Trackers"): "#f472b6",            # Soft Rose Pink
+    ("Health & Fitness", "Healthcare & Medical"): "#be185d",       # Deep Rose
     ("Health & Fitness", "General"): "#db2777",
+
+    # Career & Jobs
+    ("Career & Jobs", "Job Search & Applications"): "#0f766e",
+
+    # Home & Personal Admin (Warm Browns)
+    ("Home & Personal Admin", "Housing & Real Estate"): "#b45309",
+    ("Home & Personal Admin", "Government & Paperwork"): "#92400e",
+    ("Home & Personal Admin", "Smart Home & Devices"): "#d97706",
 
     # Browsing & Research (Royal Blue & Indigo & Violet)
     ("Browsing & Research", "Search & Exploration"): "#3b82f6",     # Royal Blue
@@ -220,6 +231,9 @@ SUBCATEGORY_SEEDS: Dict[str, Dict[str, str]] = {
         "Email": r"\b(thunderbird|evolution|org\.gnome\.evolution|gmail|mail\.google\.com|proton|proton\.me|mail\.proton\.me|protonmail|kmail|mutt|neomutt|alpine|outlook|outlook\.live\.com|outlook\.office\.com|mailbox\.org|app\.mailbox\.org|fastmail|webmail|roundcube|tutanota|tuta\.com|yahoo mail|mail|fairemail)\b",
         "Calls & Meetings": r"\b(zoom|meet|google meet|webex|jitsi|bluejeans|call|huddle)\b",
     },
+    "Career & Jobs": {
+        "Job Search & Applications": r"\b(greenhouse|greenhouse\.io|lever\.co|ashbyhq|ashbyhq\.com|myworkdayjobs|myworkdayjobs\.com|smartapply|indeed|indeed\.com|reachmee|reachmee\.com|recruitee|teamtailor|workable|smartrecruiters|personio|wellfound|weworkremotely|remoteok|job application|job search|careers)\b",
+    },
     "Education & Learning": {
         "Language Learning": r"\b(duolingo|babbel|memrise|anki|busuu|lingvist)\b",
         "Courses & Tutorials": r"\b(coursera|udemy|khan academy|edx|codecademy|pluralsight|datacamp)\b",
@@ -238,6 +252,12 @@ SUBCATEGORY_SEEDS: Dict[str, Dict[str, str]] = {
     "Health & Fitness": {
         "Workouts & Gym": r"\b(mova|sats|fresh fitness|gym|fitness|workout|strava|training)\b",
         "Health Trackers": r"\b(garmin|garmin connect|fitbit|withings|apple health|google fit|whoop|polar)\b",
+        "Healthcare & Medical": r"\b(helsenorge|helsenorge\.no|helfo|legelisten|legevakt|vitusapotek|apotek1|apotek|pharmacy|bioclinica|synlab|clinic|doctor appointment)\b",
+    },
+    "Home & Personal Admin": {
+        "Housing & Real Estate": r"\b(hybel|hybel\.no|boligsiden|eiendom|idealista|zillow|rightmove|immobilienscout24|real estate|realestate|property portal)\b",
+        "Government & Paperwork": r"\b(altinn|altinn\.no|skatteetaten|skatteetaten\.no|nav\.no|udi\.no|id-porten|idporten|withpersona|persona|e-boks|digipost)\b",
+        "Smart Home & Devices": r"\b(vesync|levoit|home assistant|homeassistant|philips hue|google home|tuya|smart life|mi home)\b",
     },
     "Browsing & Research": {
         "Search & Exploration": r"\b(google search|duckduckgo|duckduckgo\.com|bing search|bing\.com|brave search|search\.brave\.com|kagi|kagi\.com|searx|search)\b",

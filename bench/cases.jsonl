@@ -125,9 +125,10 @@
 {"app": "firefox", "title": "Home - Mastodon", "url": "https://mastodon.social/home", "expected": "Social Media > Reddit & Communities"}
 {"app": "firefox", "title": "Async closures stabilized - The Rust Programming Language Forum", "url": "https://users.rust-lang.org/t/123", "expected": "Social Media > Reddit & Communities"}
 {"app": "firefox", "title": "Feed | LinkedIn", "url": "https://www.linkedin.com/feed/", "expected": "Social Media > LinkedIn & Professional"}
-{"app": "firefox", "title": "Jobs | LinkedIn", "url": "https://www.linkedin.com/jobs/", "expected": "Social Media > LinkedIn & Professional"}
-{"app": "firefox", "title": "Senior Rust Engineer - Remote | Indeed.com", "url": "https://www.indeed.com/viewjob?jk=abc", "expected": "Social Media > LinkedIn & Professional"}
-{"app": "firefox", "title": "Ledige stillinger - FINN jobb", "url": "https://www.finn.no/job/search", "expected": "Social Media > LinkedIn & Professional"}
+{"app": "firefox", "title": "Jobs | LinkedIn", "url": "https://www.linkedin.com/jobs/", "expected": "Career & Jobs > Job Search & Applications"}
+{"app": "firefox", "title": "Senior Rust Engineer - Remote | Indeed.com", "url": "https://www.indeed.com/viewjob?jk=abc", "expected": "Career & Jobs > Job Search & Applications"}
+{"app": "firefox", "title": "Ledige stillinger - FINN jobb", "url": "https://www.finn.no/job/search", "expected": "Career & Jobs > Job Search & Applications"}
+{"app": "firefox", "title": "Job Application for Data Engineer at Acme - Greenhouse", "url": "https://job-boards.greenhouse.io/acme/jobs/4012", "expected": "Career & Jobs > Job Search & Applications"}
 {"app": "gnome-control-center", "title": "Settings - Network", "url": "", "expected": "System & Admin > OS & Desktop Settings"}
 {"app": "systemsettings", "title": "Display Configuration — System Settings", "url": "", "expected": "System & Admin > OS & Desktop Settings"}
 {"app": "nm-connection-editor", "title": "Network Connections", "url": "", "expected": "System & Admin > OS & Desktop Settings"}
@@ -144,3 +145,19 @@
 {"app": "firefox", "title": "about:blank", "url": "about:blank", "expected": "Uncategorized > General Activity"}
 {"app": "gnome-shell", "title": "Activities", "url": "", "expected": "Uncategorized > General Activity"}
 {"app": "unknownapp", "title": "Untitled", "url": "", "expected": "Uncategorized > General Activity"}
+{"app": "firefox", "title": "Mine timeavtaler - Helsenorge", "url": "https://www.helsenorge.no/timeavtaler/", "expected": "Health & Fitness > Healthcare & Medical"}
+{"app": "firefox", "title": "Finn fastlege | Legelisten.no", "url": "https://www.legelisten.no/leger", "expected": "Health & Fitness > Healthcare & Medical"}
+{"app": "firefox", "title": "Reseptbelagte legemidler - Vitusapotek", "url": "https://www.vitusapotek.no/resept", "expected": "Health & Fitness > Healthcare & Medical"}
+{"app": "firefox", "title": "Blood test results - Synlab", "url": "https://www.synlab.no/pasient/resultater", "expected": "Health & Fitness > Healthcare & Medical"}
+{"app": "firefox", "title": "4-roms leilighet til salgs | FINN eiendom", "url": "https://www.finn.no/realestate/homes/ad.html?finnkode=1", "expected": "Home & Personal Admin > Housing & Real Estate"}
+{"app": "firefox", "title": "Leiligheter til leie i Bergen | Hybel.no", "url": "https://hybel.no/bolig-til-leie/bergen/", "expected": "Home & Personal Admin > Housing & Real Estate"}
+{"app": "firefox", "title": "Tenant portal - My lease", "url": "https://minside.obos.no/my-lease", "expected": "Home & Personal Admin > Housing & Real Estate"}
+{"app": "firefox", "title": "Apartments for rent in Lisbon - idealista", "url": "https://www.idealista.pt/en/arrendar-casas/lisboa/", "expected": "Home & Personal Admin > Housing & Real Estate"}
+{"app": "firefox", "title": "Innboks - Altinn", "url": "https://www.altinn.no/ui/messagebox", "expected": "Home & Personal Admin > Government & Paperwork"}
+{"app": "firefox", "title": "Skattemeldingen 2026 | Skatteetaten", "url": "https://www.skatteetaten.no/person/skatt/skattemelding/", "expected": "Home & Personal Admin > Government & Paperwork"}
+{"app": "firefox", "title": "Verify your identity - Persona", "url": "https://inquiry.withpersona.com/verify", "expected": "Home & Personal Admin > Government & Paperwork"}
+{"app": "firefox", "title": "Søknad om dagpenger - nav.no", "url": "https://www.nav.no/dagpenger/soknad", "expected": "Home & Personal Admin > Government & Paperwork"}
+{"app": "vesync", "title": "VeSync", "url": "", "expected": "Home & Personal Admin > Smart Home & Devices"}
+{"app": "firefox", "title": "Overview – Home Assistant", "url": "http://homeassistant.local:8123/lovelace/0", "expected": "Home & Personal Admin > Smart Home & Devices"}
+{"app": "philips hue", "title": "Hue - Living room", "url": "", "expected": "Home & Personal Admin > Smart Home & Devices"}
+{"app": "smart life", "title": "Smart Life - Devices", "url": "", "expected": "Home & Personal Admin > Smart Home & Devices"}
