@@ -11,7 +11,7 @@ Reported separately:
     uv run python bench/run_benchmark.py --mode options     # single-pass option-probability readout
     uv run python bench/run_benchmark.py --corrections      # also use your human corrections (stay local)
 
-Synthetic cases live in bench/cases.jsonl. Results go to data/benchmark_v2_results.json (git-ignored).
+Synthetic cases live in bench/cases.jsonl. Per-item results go to data/benchmark_results_<mode>.json (git-ignored).
 Activity titles are printed for synthetic cases only, never for your own corrections.
 """
 
@@ -36,7 +36,6 @@ from gemma_oracle import GemmaOracle  # noqa: E402
 from llama_server_manager import llama_server  # noqa: E402
 
 CASES_PATH = Path(__file__).resolve().parent / "cases.jsonl"
-RESULTS_PATH = DATA_DIR / "benchmark_v2_results.json"
 LETTERS = "ABCDEFGHIJKLMNOP"
 THRESHOLDS = (0.5, 0.7, 0.9, 0.95)
 
@@ -179,12 +178,13 @@ def main():
         if llm[i][0] != exp[i] and cases[i]["source"] == "synthetic":
             print(f"  #{i:<3d} {cases[i]['app'][:14]:<14} {cases[i]['title'][:46]:<46} want {exp[i]}  got {llm[i][0]} ({llm[i][1]:.2f})")
 
-    RESULTS_PATH.write_text(json.dumps({
+    results_path = DATA_DIR / f"benchmark_results_{args.mode}.json"
+    results_path.write_text(json.dumps({
         "mode": args.mode, "seconds_per_item": seconds / n, "n": n,
         "items": [{"index": i, "source": cases[i]["source"], "expected": exp[i], "rule": rules[i],
                    "llm": llm[i][0], "confidence": llm[i][1]} for i in range(n)],
     }, indent=2), encoding="utf-8")
-    print(f"\nPer-item results: {RESULTS_PATH}")
+    print(f"\nPer-item results: {results_path}  (use with bench/decision_models.py --gate)")
 
 
 if __name__ == "__main__":

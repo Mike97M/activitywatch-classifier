@@ -8,6 +8,9 @@ so run it from a separate environment:
         torch transformers sentencepiece safetensors huggingface-hub scikit-learn joblib numpy laya
     .venv-models/bin/python bench/decision_models.py jevk5lite --cases data/real_benchmark.jsonl
     .venv-models/bin/python bench/decision_models.py laya      --cases data/real_benchmark.jsonl
+    # as a checker of Gemma's labels (results from bench/run_benchmark.py on the same cases):
+    .venv-models/bin/python bench/decision_models.py laya --cases data/real_benchmark.jsonl \
+        --gate data/benchmark_results_json.json
 
 Inputs get the production cleaning (anonymizer) and scores are split into all cases and the cases the
 rules don't cover, like bench/run_benchmark.py. Only aggregates are printed.
@@ -102,7 +105,7 @@ class JevK5Lite:
         def one_head(d):
             (p,) = self.heads(activity_text(d), [("activity type", [f"{s} ({c})" for c, subs in TAX.items() for s in subs])])
             i = max(range(len(p)), key=p.__getitem__)
-            return FULL[i], p[i]
+            return FULL[i], p[i], dict(zip(FULL, p))
 
         def two_heads(d):
             pc, ps = self.heads(activity_text(d), [
@@ -113,8 +116,10 @@ class JevK5Lite:
                 for s in subs:
                     joint[f"{c} > {s}"] = pc[ci] * ps[k]
                     k += 1
-            best = max(joint, key=joint.get)
-            return best, joint[best] / sum(joint.values())
+            z = sum(joint.values())
+            probs = {k: v / z for k, v in joint.items()}
+            best = max(probs, key=probs.get)
+            return best, probs[best], probs
 
         return [("JevK5-Lite, one head (all subcategories)", one_head),
                 ("JevK5-Lite, category x subcategory heads", two_heads)]
@@ -130,8 +135,8 @@ class Laya:
 
     def _ans(self, r, q):
         a = r["answers"][q]
-        p = a.get("probabilities") or {}
-        return a["choice"], float(p.get(a["choice"], a.get("confidence", 0.0)))
+        p = {k: float(v) for k, v in (a.get("probabilities") or {}).items()}
+        return a["choice"], p.get(a["choice"], float(a.get("confidence", 0.0))), p
 
     def variants(self):
         flat_q = {"activity": {"type": "choice", "instructions": "Which kind of computer activity is this?",
@@ -144,16 +149,28 @@ class Laya:
 
         def two_step(d):
             t = activity_text(d)
-            c, pc = self._ans(self.router.predict(t, cat_q), "category")
+            c, pc, _ = self._ans(self.router.predict(t, cat_q), "category")
             subs = TAX[c]
             if len(subs) == 1:
-                return f"{c} > {subs[0]}", pc
+                return f"{c} > {subs[0]}", pc, None
             sq = {"sub": {"type": "choice", "instructions": f"This is a '{c}' activity. Which kind exactly?",
                           "criteria": {s: s for s in subs}}}
-            s, ps = self._ans(self.router.predict(t, sq), "sub")
-            return f"{c} > {s}", pc * ps
+            s, ps, _ = self._ans(self.router.predict(t, sq), "sub")
+            return f"{c} > {s}", pc * ps, None  # no full distribution: not usable as a --gate checker
 
         return [("Laya, one question (all subcategories)", flat), ("Laya, category then subcategory", two_step)]
+
+
+def gate_report(cases, inputs, preds, gemma_items):
+    """Gemma labels on rule-miss cases, learned only if this model also gives Gemma's label P >= t."""
+    miss = [i for i in range(len(cases)) if FastClassifier.match_rules(FastClassifier.extract_features(inputs[i])) is None]
+    print("  as a checker of Gemma's labels (rule-miss cases, Gemma confidence >= 0.95 in all rows):")
+    for t in (None, 0.1, 0.2, 0.3, 0.5):
+        ok = lambda i: gemma_items[i]["confidence"] >= 0.95 and (t is None or preds[i][2].get(gemma_items[i]["llm"], 0.0) >= t)  # noqa: E731
+        r = sum(ok(i) and gemma_items[i]["llm"] == cases[i]["expected"] for i in miss)
+        w = sum(ok(i) and gemma_items[i]["llm"] != cases[i]["expected"] for i in miss)
+        name = "Gemma alone" if t is None else f"+ checker P(Gemma's label) >= {t}"
+        print(f"    {name:<36} learn {r:3d} right, {w:3d} wrong  ({100 * r / max(1, r + w):5.1f}% correct)")
 
 
 def report(name, cases, inputs, preds, seconds):
@@ -181,9 +198,14 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("model", choices=["jevk5lite", "laya"])
     ap.add_argument("--cases", type=Path, default=CASES_PATH)
-    ap.add_argument("--threads", type=int, default=os.cpu_count() or 4)
+    ap.add_argument("--threads", type=int, default=min(8, os.cpu_count() or 4),
+                    help="CPU threads (default 8: on hybrid CPUs the efficiency cores slow torch down)")
+    ap.add_argument("--gate", type=Path, help="per-item Gemma results from bench/run_benchmark.py on the same cases")
     a = ap.parse_args()
     cases = [json.loads(line) for line in a.cases.open(encoding="utf-8") if line.strip()]
+    gemma = json.loads(a.gate.read_text())["items"] if a.gate else None
+    if gemma is not None and len(gemma) != len(cases):
+        sys.exit(f"--gate results have {len(gemma)} items but --cases has {len(cases)}; use the same cases file")
     inputs = [production_input(c) for c in cases]
     model = (JevK5Lite if a.model == "jevk5lite" else Laya)(a.threads)
     print(f"{a.model}: {len(cases)} cases, {a.threads} CPU threads")
@@ -192,6 +214,8 @@ def main():
         t0 = time.time()
         preds = [fn(d) for d in inputs]
         report(name, cases, inputs, preds, time.time() - t0)
+        if gemma is not None and preds and preds[0][2] is not None:
+            gate_report(cases, inputs, preds, gemma)
 
 
 if __name__ == "__main__":
