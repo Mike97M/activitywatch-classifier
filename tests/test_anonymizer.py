@@ -196,3 +196,15 @@ def test_sanitizing_is_idempotent():
                 "foo - Google Search", "Chat with Bob", "OPENAI_API_KEY=abc123"):
         once = a.sanitize_title(raw)
         assert a.sanitize_title(once) == once, raw
+
+
+def test_private_terms_file(tmp_path, monkeypatch):
+    import anonymizer as anon_mod
+
+    terms = tmp_path / "private_terms.txt"
+    terms.write_text("# comment line\nJane Q Public\nj.public  # inline comment\n", encoding="utf-8")
+    monkeypatch.setattr(anon_mod, "PRIVATE_TERMS_FILE", terms)
+    monkeypatch.delenv("ANONYMIZER_EXTRA_TERMS", raising=False)
+    a = anon_mod.TextAnonymizer(hostnames=[])
+    assert a.sanitize_title("Contract - Jane Q Public.pdf") == "Contract - <USER>.pdf"
+    assert a.sanitize_title("j.public - Mail - mailbox Suite") == "<USER> - Mail - mailbox Suite"

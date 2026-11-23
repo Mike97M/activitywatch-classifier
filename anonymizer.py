@@ -5,8 +5,8 @@ IP/MAC addresses, secrets/API keys, search queries and contact names before trai
 are saved. Training samples additionally get chat/email window titles masked (subjects and
 contact names), see `sanitize_for_training`.
 
-Add your own identifiers (real name, handles, employer, other device names) with
-ANONYMIZER_EXTRA_TERMS="Jane Doe,janedoe42,acme-laptop".
+Add your own identifiers (real name, handles, employer, other device names) one per line in
+data/private_terms.txt (git-ignored), or with ANONYMIZER_EXTRA_TERMS="Jane Doe,janedoe42,acme-laptop".
 """
 
 import getpass
@@ -17,6 +17,20 @@ import socket
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Set
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
+
+from config import DATA_DIR
+
+PRIVATE_TERMS_FILE = DATA_DIR / "private_terms.txt"
+
+
+def _configured_terms() -> List[str]:
+    """ANONYMIZER_EXTRA_TERMS (comma-separated) plus data/private_terms.txt (one per line, # comments)."""
+    terms = os.environ.get("ANONYMIZER_EXTRA_TERMS", "").split(",")
+    try:
+        terms += [ln.split("#", 1)[0] for ln in PRIVATE_TERMS_FILE.read_text(encoding="utf-8").splitlines()]
+    except OSError:
+        pass
+    return terms
 
 _GENERIC_NAMES = {"root", "user", "guest", "admin", "localhost", "home", "default"}
 
@@ -130,7 +144,7 @@ class TextAnonymizer:
                     self.hostnames.add(name)
 
         if extra_terms is None:
-            extra_terms = os.environ.get("ANONYMIZER_EXTRA_TERMS", "").split(",")
+            extra_terms = _configured_terms()
         self.extra_terms: Set[str] = {t.strip().lower() for t in extra_terms if len(t.strip()) >= 3}
 
         def _alternation(terms: Set[str]) -> Optional[re.Pattern]:

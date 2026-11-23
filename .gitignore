@@ -40,6 +40,7 @@ data/*.db
 data/cache/
 data/*.jsonl
 data/*.tmp
+data/private_terms.txt
 data/*.json
 !data/training_data.example.jsonl
 !data/.gitkeep
