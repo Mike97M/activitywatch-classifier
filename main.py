@@ -105,6 +105,13 @@ def main():
         help="Reclassify and overwrite events even if already present in target bucket (default: False)",
     )
     run_parser.add_argument(
+        "--defer-llm",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Save low-confidence events with the fast guess, tagged 'deferred', instead of calling the LLM; "
+             "label them later with 'classify-pending' (default: False)",
+    )
+    run_parser.add_argument(
         "--time-range",
         choices=["24h", "today", "7d", "week", "30d", "month", "all"],
         default=None,
@@ -120,6 +127,30 @@ def main():
         default=None,
         help="Custom end ISO-8601 timestamp (e.g. 2026-11-06T00:00:00Z)",
     )
+
+    # Classify deferred events command
+    pending_parser = subparsers.add_parser(
+        "classify-pending", help="Send events saved by 'run --defer-llm' to the LLM and update them in place"
+    )
+    pending_parser.add_argument("--target", "-t", default=DEFAULT_TARGET_BUCKET_ID, help="Target bucket ID")
+    pending_parser.add_argument("--start", default=None, help="Only events after this ISO-8601 timestamp")
+    pending_parser.add_argument("--end", default=None, help="Only events before this ISO-8601 timestamp")
+    pending_parser.add_argument(
+        "--backend", default=DEFAULT_GEMMA_BACKEND, choices=["llama_server", "openai_compatible"],
+        help=f"LLM backend (default: {DEFAULT_GEMMA_BACKEND})",
+    )
+    pending_parser.add_argument("--model-path", default=None, help="Explicit path to a local GGUF file")
+    pending_parser.add_argument(
+        "--collect-training-data", action=argparse.BooleanOptionalAction, default=True,
+        help="Learn from confident LLM labels (default: True)",
+    )
+
+    # Rebuild the "classified" Activity-tab host from the target bucket
+    resync_parser = subparsers.add_parser(
+        "resync-classified",
+        help="Delete the aw-watcher-*_classified buckets and rebuild them from the target bucket",
+    )
+    resync_parser.add_argument("--target", "-t", default=DEFAULT_TARGET_BUCKET_ID, help="Target bucket ID")
 
     # Status command
     status_parser = subparsers.add_parser("status", help="Show ActivityWatch & Classifier status")
@@ -293,6 +324,7 @@ def main():
             afk_bucket_id=args.afk_bucket,
             collect_training_data=args.collect_training_data,
             force_reclassify=args.force_reclassify,
+            defer_llm=args.defer_llm,
         )
 
         print("\nPipeline Run Completed!")
@@ -309,9 +341,38 @@ def main():
         print(f"  Exact Memory Cache Hits: {results.get('cached_memory_calls', 0)}")
         print(f"  Fast Classifier calls:   {results['fast_classifier_calls']}")
         print(f"  Gemma Oracle calls:      {results['gemma_oracle_calls']}")
+        if results.get("deferred_events"):
+            print(f"  Deferred to LLM:         {results['deferred_events']}  (run 'classify-pending' to label them)")
         if results.get("new_training_samples_added") is not None:
             print(f"  New Training Samples:    {results['new_training_samples_added']}")
         print(f"  Category Distribution:   {results['category_distribution']}")
+        return
+
+    if args.command == "classify-pending":
+        oracle = GemmaOracle(backend=args.backend, local_gguf_path=args.model_path)
+        pipeline = ClassificationPipeline(gemma_oracle=oracle)
+        res = pipeline.classify_pending(
+            target_bucket_id=args.target,
+            start_time=args.start,
+            end_time=args.end,
+            collect_training_data=args.collect_training_data,
+        )
+        print(f"Deferred events found:      {res['deferred_events_found']}")
+        print(f"Unique activities to LLM:   {res['unique_activities_sent_to_llm']}")
+        print(f"Events labelled:            {res['events_labelled']}")
+        print(f"Still deferred (LLM down):  {res['still_deferred']}")
+        print(f"New training samples:       {res['new_training_samples_added']}")
+        return
+
+    if args.command == "resync-classified":
+        from config import DATA_DIR
+        res = AWClient().resync_classified_host(
+            args.target, DATA_DIR / "classified_host_backup.json",
+            progress_callback=lambda u: print(u["message"]),
+        )
+        print(f"Backup: {res['backup_path']}")
+        for b, n in res["rebuilt_buckets"].items():
+            print(f"  {b}: {n} events")
         return
 
     if args.command == "view":

@@ -4,7 +4,7 @@ import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock
 from classifier import FastClassifier
-from gemma_oracle import GemmaOracle
+from gemma_oracle import HEURISTIC_BACKEND, GemmaOracle
 from pipeline import ClassificationPipeline
 
 # Nothing listens on the discard port: the oracle falls back to its heuristic instantly.
@@ -453,6 +453,9 @@ def test_pipeline_does_not_learn_from_heuristic_fallback():
         assert stats["gemma_oracle_calls"] == 1
         assert stats["new_training_samples_added"] == 0
         assert classifier.training_samples == []
+        # Saved as deferred, not as a Gemma label, so classify_pending() retries it once the LLM is back
+        assert stats["deferred_events"] == 1
+        assert mock_aw.insert_events.call_args[0][1][0]["data"]["classified_by"] == "deferred"
 
 
 def test_attach_browser_urls_matches_overlapping_tab():
@@ -525,3 +528,72 @@ def test_urls_come_from_the_same_browser_and_not_from_sqlitebrowser():
     assert [e["data"].get("url") for e in events] == [
         "https://brave-tab.example", "https://firefox-tab.example", None, None,
     ]
+
+
+def test_defer_llm_then_classify_pending():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        classifier = FastClassifier(model_path=Path(tmpdir) / "m.joblib", training_data_path=Path(tmpdir) / "d.jsonl")
+        mock_aw = MagicMock()
+        mock_aw.find_afk_bucket_for_source.return_value = None
+        mock_aw.find_web_buckets_for_source.return_value = []
+        mock_aw.get_existing_target_timestamps.return_value = set()
+        mock_aw.get_events.return_value = [
+            {"timestamp": "2026-11-05T12:00:00Z", "duration": 60.0, "data": {"app": "customtool", "title": "Quarterly planning board"}},
+            {"timestamp": "2026-11-05T12:01:00Z", "duration": 30.0, "data": {"app": "customtool", "title": "Quarterly planning board"}},
+            {"timestamp": "2026-11-05T12:02:00Z", "duration": 30.0, "data": {"app": "othertool", "title": "Something else"}},
+        ]
+        mock_aw.insert_events.side_effect = lambda bucket_id, evs: evs
+        oracle = MagicMock()
+        pipeline = ClassificationPipeline(aw_client=mock_aw, classifier=classifier, gemma_oracle=oracle, confidence_threshold=0.75)
+
+        stats = pipeline.run(source_bucket_ids=["src"], target_bucket_id="tgt", limit_per_bucket=10, defer_llm=True)
+
+        oracle.classify_batch.assert_not_called()
+        assert stats["deferred_events"] == 3
+        saved = mock_aw.insert_events.call_args[0][1]
+        assert {e["data"]["classified_by"] for e in saved} == {"deferred"}
+
+        # Later: the LLM labels the planning board; the other one fails over to the heuristic and stays deferred.
+        mock_aw.reset_mock()
+        mock_aw.insert_events.side_effect = lambda bucket_id, evs: evs
+        mock_aw.get_events.return_value = [{**e, "id": i} for i, e in enumerate(saved, start=100)]
+        oracle.classify_batch.return_value = [
+            {"category": "Productivity", "subcategory": "Planning", "full_category": "Productivity > Planning",
+             "confidence": 0.95, "reasoning": "stub", "backend": "test"},
+            {"category": "Uncategorized", "subcategory": "General Activity", "confidence": 0.3, "backend": HEURISTIC_BACKEND},
+        ]
+
+        res = pipeline.classify_pending(target_bucket_id="tgt")
+
+        assert len(oracle.classify_batch.call_args[0][0]) == 2  # one LLM call per unique activity
+        assert res["events_labelled"] == 2 and res["still_deferred"] == 1
+        replaced = mock_aw.insert_events.call_args[0][1]
+        assert all(e["data"]["category"] == "Productivity" and "id" not in e for e in replaced)
+        assert [c[0][1] for c in mock_aw.delete_event.call_args_list] == [100, 101]
+        assert res["new_training_samples_added"] == 1
+
+
+def test_web_watcher_app_is_saved_under_the_desktop_browser_name():
+    from pipeline import feature_data
+    with tempfile.TemporaryDirectory() as tmpdir:
+        classifier = FastClassifier(model_path=Path(tmpdir) / "m.joblib", training_data_path=Path(tmpdir) / "d.jsonl")
+        seen = []
+        classifier.extract_features = lambda d, f=classifier.extract_features: seen.append(d.get("app")) or f(d)
+        mock_aw = MagicMock()
+        mock_aw.find_web_buckets_for_source.return_value = []
+        mock_aw.get_existing_target_timestamps.return_value = set()
+        mock_aw.get_events.return_value = [
+            {"timestamp": "2026-11-05T12:00:00Z", "duration": 60.0, "data": {"title": "Docs", "url": "https://docs.python.org/3/"}},
+        ]
+        mock_aw.insert_events.side_effect = lambda bucket_id, evs: evs
+        pipeline = ClassificationPipeline(aw_client=mock_aw, classifier=classifier, gemma_oracle=MagicMock())
+
+        pipeline.run(source_bucket_ids=["aw-watcher-web-brave_suse"], target_bucket_id="tgt", limit_per_bucket=10,
+                     filter_afk=False, defer_llm=True)
+
+        saved = mock_aw.insert_events.call_args[0][1][0]["data"]
+        assert saved["app"] == "Brave-browser"
+        assert seen == ["brave"]  # the classifier (and its memory cache) still sees the slug
+        assert feature_data(saved)["app"] == "brave"
+        window_event = {"app": "Brave-browser", "source_bucket": "aw-watcher-window_suse"}
+        assert feature_data(window_event)["app"] == "Brave-browser"

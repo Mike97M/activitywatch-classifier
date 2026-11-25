@@ -101,6 +101,6 @@ def test_sync_classified_host_bucket_multi_browser():
 
     created_bucket_ids = [call[1]["bucket_id"] for call in client.create_bucket.call_args_list]
     assert "aw-watcher-web-brave_classified" in created_bucket_ids
-    assert "aw-watcher-web-chrome_classified" in created_bucket_ids
+    assert "aw-watcher-web-chrome_classified" not in created_bucket_ids  # phone pages stay off desktop browsers
     assert "aw-watcher-window_classified" in created_bucket_ids
     assert "aw-watcher-afk_classified" in created_bucket_ids

@@ -363,6 +363,8 @@ function attachToRunningTask(task) {
   const runningPill = document.getElementById("running-task-pill");
 
   if (btn) btn.disabled = true;
+  document.getElementById("btn-classify-pending").disabled = true;
+  document.getElementById("btn-resync-classified").disabled = true;
   if (btnText) btnText.textContent = "Pipeline Running in Background...";
   if (btnIcon) btnIcon.className = "fa-solid fa-spinner fa-spin text-xs";
 
@@ -465,6 +467,32 @@ async function applyTaskResults(task) {
   if (progressPercent) progressPercent.textContent = "100% Done";
   if (progressStatusText) progressStatusText.textContent = "Activities classified and saved to ActivityWatch.";
 
+  // "Rebuild classified host" results.
+  if (results.rebuilt_buckets !== undefined) {
+    const total = Object.values(results.rebuilt_buckets).reduce((a, b) => a + b, 0);
+    if (progressStatusText) {
+      progressStatusText.textContent =
+        `Rebuilt ${Object.keys(results.rebuilt_buckets).length} "classified" buckets (${total} events) from ` +
+        `${results.source_events} events. Backup: ${results.backup_path}`;
+    }
+    setTimeout(hideTaskProgress, 8000);
+    return;
+  }
+
+  // "Classify deferred" results: no distributions to chart, just counts.
+  if (results.events_labelled !== undefined) {
+    if (progressStatusText) {
+      progressStatusText.textContent =
+        `Labelled ${results.events_labelled} of ${results.deferred_events_found} deferred events` +
+        (results.still_deferred ? ` (${results.still_deferred} still deferred: LLM unreachable)` : "");
+    }
+    await fetchBucketSummary();
+    await loadTargetEvents(results.target_bucket_id);
+    await fetchStatus();
+    setTimeout(hideTaskProgress, 4000);
+    return;
+  }
+
   const batchFast = results.fast_classifier_calls !== undefined ? results.fast_classifier_calls : null;
   const batchGemma = results.gemma_oracle_calls !== undefined ? results.gemma_oracle_calls : null;
   updateClassifierStatsUI(batchFast, batchGemma);
@@ -521,6 +549,8 @@ function hideTaskProgress() {
   const runningPill = document.getElementById("running-task-pill");
 
   if (btn) btn.disabled = false;
+  document.getElementById("btn-classify-pending").disabled = false;
+  document.getElementById("btn-resync-classified").disabled = false;
   if (btnText) btnText.textContent = "Start Non-Destructive Cloning & Gemma Classification";
   if (btnIcon) btnIcon.className = "fa-solid fa-play text-xs";
   if (progressContainer) progressContainer.classList.add("hidden");
@@ -598,6 +628,7 @@ async function runPipeline() {
         filter_afk: filterAfk,
         include_audible: includeAudible,
         collect_training_data: collectTraining,
+        defer_llm: document.getElementById("toggle-defer-llm").checked,
       }),
     });
 
@@ -615,6 +646,51 @@ async function runPipeline() {
   } catch (err) {
     alert("Error executing pipeline: " + err.message);
     hideTaskProgress();
+  }
+}
+
+async function classifyPending() {
+  const targetBucketId = document.getElementById("target-bucket-id").value.trim() || "aw-classifier-categorized";
+  const collectTraining = document.getElementById("toggle-collect-training").checked;
+  try {
+    const res = await fetch("/api/classify-pending", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ target_bucket_id: targetBucketId, collect_training_data: collectTraining }),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || "Request failed");
+    }
+    const data = await res.json();
+    if (data.task) attachToRunningTask(data.task);
+  } catch (err) {
+    alert("Error classifying deferred activities: " + err.message);
+  }
+}
+
+async function resyncClassified() {
+  const targetBucketId = document.getElementById("target-bucket-id").value.trim() || "aw-classifier-categorized";
+  const ok = confirm(
+    `Delete the aw-watcher-*_classified buckets and rebuild them from "${targetBucketId}"?\n\n` +
+    "They are backed up to data/classified_host_backup.json first. Anything only in the old classified buckets " +
+    "(e.g. runs saved to another target bucket) is not rebuilt."
+  );
+  if (!ok) return;
+  try {
+    const res = await fetch("/api/resync-classified", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ target_bucket_id: targetBucketId }),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || "Request failed");
+    }
+    const data = await res.json();
+    if (data.task) attachToRunningTask(data.task);
+  } catch (err) {
+    alert("Error rebuilding the classified host: " + err.message);
   }
 }
 
@@ -916,6 +992,8 @@ function updateChart(dist) {
 // -------------------------------------------------------------
 function setupEventListeners() {
   document.getElementById("btn-run-pipeline").addEventListener("click", runPipeline);
+  document.getElementById("btn-classify-pending").addEventListener("click", classifyPending);
+  document.getElementById("btn-resync-classified").addEventListener("click", resyncClassified);
   document.getElementById("btn-refresh-buckets").addEventListener("click", fetchBuckets);
   document.getElementById("btn-refresh-events").addEventListener("click", () => loadTargetEvents());
 

@@ -94,10 +94,11 @@ SUBCATEGORY_COLORS: Dict[Tuple[str, str], str] = {
     ("Media & Entertainment", "General"): "#b45309",
 
     # Social Media (Twitter Sky & Reddit Coral & LinkedIn Blue)
-    ("Social Media", "X / Twitter"): "#0284c7",                   # Twitter Sky Blue
-    ("Social Media", "Reddit & Communities"): "#f43f5e",          # Reddit Coral Rose
-    ("Social Media", "LinkedIn & Professional"): "#0a66c2",       # LinkedIn Deep Blue
-    ("Social Media", "General"): "#e11d48",
+    # Reds, like the parent: social media is time to cut down on. LinkedIn (job hunting too) stays blue.
+    ("Social Media", "X / Twitter"): "#dc2626",                   # Red
+    ("Social Media", "Reddit & Communities"): "#f43f5e",          # Rose
+    ("Social Media", "LinkedIn & Professional"): "#0a66c2",       # LinkedIn Blue
+    ("Social Media", "General"): "#e11d48",                       # Crimson
 
     # System & Admin (Slate & Charcoal)
     ("System & Admin", "OS & Desktop Settings"): "#64748b",       # Slate Gray

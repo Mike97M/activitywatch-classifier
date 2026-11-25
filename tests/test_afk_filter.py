@@ -422,3 +422,55 @@ def test_bucket_summary_is_incremental(monkeypatch):
     stored.pop()  # changed outside the classifier -> count mismatch -> full refresh
     assert client.get_bucket_summary("t")["total_events"] == 2
     assert calls["full"] == 2
+
+
+def test_not_afk_spans_cover_only_the_events():
+    from aw_client import not_afk_spans
+    spans = not_afk_spans([
+        {"timestamp": "2026-11-05T12:00:00Z", "duration": 60.0},
+        {"timestamp": "2026-11-05T12:01:00Z", "duration": 30.0},   # touches the first: merged
+        {"timestamp": "2026-11-07T09:00:00Z", "duration": 120.0},  # two days later: its own span
+    ])
+    assert [s["duration"] for s in spans] == [90.0, 120.0]
+    assert all(s["data"] == {"status": "not-afk"} for s in spans)
+
+
+def test_classified_sync_keeps_phone_browser_events_off_desktop_browsers():
+    from unittest.mock import MagicMock
+    from aw_client import AWClient
+    c = AWClient(base_url="http://127.0.0.1:9")
+    c.create_bucket = MagicMock()
+    c.insert_events = MagicMock()
+    c.sync_classified_host_bucket([
+        {"timestamp": "2026-11-05T12:00:00Z", "duration": 60.0,
+         "data": {"app": "browser", "title": "News", "url": "https://example.org/a", "source_bucket": "aw-watcher-android-web-synced-from-oneplus_12"}},
+        {"timestamp": "2026-11-05T12:01:00Z", "duration": 60.0,
+         "data": {"app": "Brave-browser", "title": "Docs", "url": "https://docs.python.org/", "source_bucket": "aw-watcher-web-brave_suse"}},
+    ])
+    inserted = {call[0][0]: call[0][1] for call in c.insert_events.call_args_list}
+    phone, desktop = inserted["aw-watcher-window_classified"]
+    assert phone["data"]["app"] == "Phone - browser" and phone["data"]["title"] == "News [example.org]"
+    assert desktop["data"]["app"] == "Brave-browser"
+    assert [e["data"]["url"] for e in inserted["aw-watcher-web-brave_classified"]] == ["https://docs.python.org/"]
+    assert not any(b.startswith("aw-watcher-web-chrome") for b in inserted)
+
+
+def test_resync_classified_host_backs_up_deletes_and_rebuilds(tmp_path):
+    import json
+    from unittest.mock import MagicMock
+    from aw_client import AWClient
+    c = AWClient(base_url="http://127.0.0.1:9")
+    target_events = [{"id": 1, "timestamp": "2026-11-05T12:00:00Z", "duration": 60.0, "data": {"app": "Code", "title": "x"}}]
+    old = {"aw-watcher-window_classified": [{"id": 7}], "aw-watcher-afk_classified": [{"id": 8}]}
+    c.get_events = MagicMock(side_effect=lambda b, limit=0: target_events if b == "tgt" else old[b])
+    c.list_buckets = MagicMock(return_value={"tgt": {}, "aw-watcher-window_suse": {}, **{b: {} for b in old}})
+    c.delete_bucket = MagicMock()
+    c.sync_classified_host_bucket = MagicMock()
+    c.count_events = MagicMock(return_value=1)
+
+    res = c.resync_classified_host("tgt", tmp_path / "backup.json")
+
+    assert json.loads((tmp_path / "backup.json").read_text()) == old
+    assert sorted(call[0][0] for call in c.delete_bucket.call_args_list) == sorted(old)  # never the source buckets
+    c.sync_classified_host_bucket.assert_called_once_with(target_events, host="classified")
+    assert res["source_events"] == 1

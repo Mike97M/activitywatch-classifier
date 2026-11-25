@@ -11,6 +11,7 @@ Reported separately:
     uv run python bench/run_benchmark.py --mode options     # single-pass option-probability readout
     uv run python bench/run_benchmark.py --corrections      # also use your human corrections (stay local)
     uv run python bench/run_benchmark.py --model models/gemma-4-E4B-it-Q4_K_M.gguf   # any other GGUF
+    LLAMA_SERVER_URL=http://host:8088 uv run python bench/run_benchmark.py --model Bonsai.gguf  # model served elsewhere
 
 Synthetic cases live in bench/cases.jsonl. Per-item results go to data/benchmark_results_<mode>.json (git-ignored).
 Activity titles are printed for synthetic cases only, never for your own corrections.
@@ -117,10 +118,11 @@ def main():
     cases = load_cases(args.corrections, args.cases)
     oracle = GemmaOracle(backend="llama_server")
     if args.model:
-        if not args.model.is_file():
+        # With LLAMA_SERVER_URL the model lives on that server, so --model is only the results label.
+        if not args.model.is_file() and not llama_server.external_url:
             sys.exit(f"model file not found: {args.model}")
         oracle.local_gguf_path = str(args.model)
-    model_name = oracle.find_local_model_path().name
+    model_name = args.model.name if args.model else oracle.find_local_model_path().name
     inputs = [production_input(c) for c in cases]
     rules = []
     for clean in inputs:

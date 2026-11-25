@@ -1,8 +1,10 @@
 """ActivityWatch Client with endpoint auto-detection and non-destructive operations."""
 
+import json
 import logging
 import time
-from typing import Any, Dict, List, Optional, Set, Tuple
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 import httpx
 
 from config import (
@@ -259,6 +261,10 @@ class AWClient:
             self._add_to_summary(bucket_id, chunk)
         return inserted_results
 
+    def delete_event(self, bucket_id: str, event_id: int) -> None:
+        self._bucket_summary_cache.pop(bucket_id, None)
+        self._request("DELETE", f"/api/0/buckets/{bucket_id}/events/{event_id}")
+
     @staticmethod
     def _summary_key(event: Dict[str, Any]) -> str:
         data = event.get("data", {}) if isinstance(event, dict) else {}
@@ -351,6 +357,34 @@ class AWClient:
             logger.error(f"Failed to save setting '{key}' to ActivityWatch: {e}")
             return False
 
+    def resync_classified_host(
+        self,
+        target_bucket_id: str,
+        backup_path: Path,
+        host: str = "classified",
+        progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
+    ) -> Dict[str, Any]:
+        """Back up, delete and rebuild the aw-watcher-*_<host> buckets from every event in the target bucket."""
+        def report(pct: float, msg: str):
+            if progress_callback:
+                progress_callback({"step": "resync", "percent": pct, "message": msg})
+
+        report(5.0, f"Reading '{target_bucket_id}'...")
+        events = self.get_events(target_bucket_id, limit=-1)
+        if not events:
+            raise ValueError(f"'{target_bucket_id}' is empty or missing; nothing to rebuild from.")
+        host_buckets = [b for b in self.list_buckets() if b.startswith("aw-watcher-") and b.endswith(f"_{host}")]
+        report(15.0, f"Backing up {len(host_buckets)} '{host}' buckets...")
+        backup_path.write_text(json.dumps({b: self.get_events(b, limit=-1) for b in host_buckets}), encoding="utf-8")
+        report(30.0, f"Deleting {len(host_buckets)} '{host}' buckets...")
+        for b in host_buckets:
+            self.delete_bucket(b, force=True)
+        report(40.0, f"Rebuilding host '{host}' from {len(events)} events (takes a few minutes)...")
+        self.sync_classified_host_bucket(events, host=host)
+        counts = {b: self.count_events(b) for b in sorted(self.list_buckets()) if b.endswith(f"_{host}")}
+        return {"target_bucket_id": target_bucket_id, "source_events": len(events), "backup_path": str(backup_path),
+                "deleted_buckets": host_buckets, "rebuilt_buckets": counts}
+
     def sync_classified_host_bucket(
         self,
         events: List[Dict[str, Any]],
@@ -382,6 +416,8 @@ class AWClient:
             url = str(data.get("url") or "").strip()
             combined = f"{src} {app}".lower()
 
+            if "android" in src:
+                return None, app or "Unknown"  # phone: keep its own app name, desktop browser buckets only
             if "brave" in combined:
                 return "brave", "Brave-browser"
             elif any(f in combined for f in ("firefox", "librewolf", "waterfox", "nightly")):
@@ -424,6 +460,9 @@ class AWClient:
                     d["app"] = canonical_app
             elif not app_val:
                 d["app"] = canonical_app
+            # Phone apps share the Activity tab with the desktop: "Phone - WhatsApp", "Phone - browser".
+            if "android" in str(d.get("source_bucket", "")).lower() and not d["app"].startswith("Phone - "):
+                d["app"] = f"Phone - {d['app']}"
 
             orig_title = d.get("title") or d.get("app") or "Unknown"
             if not d.get("title"):
@@ -435,7 +474,7 @@ class AWClient:
             # Bridge ActivityWatch's native architecture limitation: ActivityWatch native Category Tree
             # only categorizes window titles from aw-watcher-window. When a browser event carries a URL,
             # append the domain tag so native regex rules matching domains/URLs match directly.
-            if url_val and browser_slug:
+            if url_val:
                 try:
                     test_url = url_val if "://" in url_val else f"https://{url_val}"
                     parsed_netloc = urlparse(test_url).netloc.split(":")[0].lower()
@@ -487,22 +526,32 @@ class AWClient:
             self.insert_events(web_bucket, b_events)
             logger.info(f"Synchronized {len(b_events)} web events with URLs to '{web_bucket}'")
 
-        # 4. Insert non-AFK span covering the events so ActivityWatch marks them active
+        # 4. Mark exactly the synced events' time as not-AFK. ActivityWatch's hours-per-day chart sums
+        # not-afk time, so a single span from the first to the last event made every day in it 24 h.
         try:
-            min_time = min(parse_iso_timestamp(e["timestamp"]) for e in events)
-            max_time = max(
-                parse_iso_timestamp(e["timestamp"]) + timedelta(seconds=float(e.get("duration", 0.0)))
-                for e in events
-            )
-            span_dur = max(60.0, (max_time - min_time).total_seconds() + 600.0)
-            afk_span = [{
-                "timestamp": to_iso_timestamp(min_time - timedelta(minutes=5)),
-                "duration": round(span_dur, 2),
-                "data": {"status": "not-afk"},
-            }]
-            self.insert_events(afk_bucket, afk_span)
+            self.insert_events(afk_bucket, not_afk_spans(events))
         except Exception as e:
-            logger.warning(f"Failed to insert AFK active span for host '{host}': {e}")
+            logger.warning(f"Failed to insert AFK active spans for host '{host}': {e}")
 
         logger.info(f"Synchronized {len(window_events)} events to Activity tab host '{host}'")
         return True
+
+
+def not_afk_spans(events: List[Dict[str, Any]], gap_seconds: float = 1.0) -> List[Dict[str, Any]]:
+    """Merge the events' intervals (touching or within gap_seconds) into not-afk events."""
+    from datetime import timedelta
+    from afk_filter import parse_iso_timestamp, to_iso_timestamp
+
+    spans: List[list] = []
+    for start, end in sorted(
+        (parse_iso_timestamp(e["timestamp"]), parse_iso_timestamp(e["timestamp"]) + timedelta(seconds=float(e.get("duration", 0.0))))
+        for e in events
+    ):
+        if spans and start <= spans[-1][1] + timedelta(seconds=gap_seconds):
+            spans[-1][1] = max(spans[-1][1], end)
+        else:
+            spans.append([start, end])
+    return [
+        {"timestamp": to_iso_timestamp(s), "duration": round((e - s).total_seconds(), 3), "data": {"status": "not-afk"}}
+        for s, e in spans
+    ]

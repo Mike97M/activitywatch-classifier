@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -13,6 +13,7 @@ from aw_client import AWClient
 from classifier import FastClassifier
 from config import (
     BASE_DIR,
+    DATA_DIR,
     DEFAULT_CATEGORIES,
     DEFAULT_CONFIDENCE_THRESHOLD,
     DEFAULT_GEMMA_BACKEND,
@@ -49,6 +50,15 @@ async def reject_cross_origin_writes(request: Request, call_next):
     ):
         return JSONResponse({"detail": "Cross-origin request rejected"}, status_code=403)
     return await call_next(request)
+
+@app.middleware("http")
+async def revalidate_ui(request: Request, call_next):
+    response = await call_next(request)
+    # Browsers otherwise keep a stale app.js after a restart: new buttons render but do nothing.
+    if request.url.path == "/" or request.url.path.startswith("/static/"):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
+
 
 # Global Pipeline components
 aw_client = AWClient()
@@ -91,6 +101,7 @@ class RunPipelineRequest(BaseModel):
     collect_training_data: bool = True
     max_streams: Optional[int] = None
     force_reclassify: bool = False
+    defer_llm: bool = False
 
 
 class EventCorrectionRequest(BaseModel):
@@ -350,6 +361,7 @@ def run_pipeline(req: RunPipelineRequest, sync: bool = False) -> Dict[str, Any]:
                 collect_training_data=req.collect_training_data,
                 max_streams=req.max_streams,
                 force_reclassify=req.force_reclassify,
+                defer_llm=req.defer_llm,
             )
             return {"status": "completed", "results": stats}
         except Exception as e:
@@ -379,6 +391,7 @@ def run_pipeline(req: RunPipelineRequest, sync: bool = False) -> Dict[str, Any]:
             "collect_training_data": req.collect_training_data,
             "max_streams": req.max_streams,
             "force_reclassify": req.force_reclassify,
+            "defer_llm": req.defer_llm,
         },
     )
 
@@ -387,6 +400,53 @@ def run_pipeline(req: RunPipelineRequest, sync: bool = False) -> Dict[str, Any]:
         "task_id": task.id,
         "task": task.to_dict(),
     }
+
+
+class ClassifyPendingRequest(BaseModel):
+    target_bucket_id: str = DEFAULT_TARGET_BUCKET_ID
+    collect_training_data: bool = True
+    max_streams: Optional[int] = None
+
+
+@app.post("/api/classify-pending")
+def classify_pending(req: ClassifyPendingRequest) -> Dict[str, Any]:
+    """Label the events a deferred run left in the target bucket, as a tracked background task."""
+    active_task = task_manager.get_active_task()
+    if active_task and active_task.task_type == "pipeline_run":
+        return {"status": "already_running", "task_id": active_task.id, "task": active_task.to_dict()}
+    task = task_manager.start_task(
+        task_type="pipeline_run",
+        target_fn=pipeline.classify_pending,
+        metadata={"target_bucket_id": req.target_bucket_id, "mode": "classify_pending"},
+        fn_kwargs={
+            "target_bucket_id": req.target_bucket_id.strip() or DEFAULT_TARGET_BUCKET_ID,
+            "collect_training_data": req.collect_training_data,
+            "max_streams": req.max_streams,
+        },
+    )
+    return {"status": "started", "task_id": task.id, "task": task.to_dict()}
+
+
+class ResyncClassifiedRequest(BaseModel):
+    target_bucket_id: str = DEFAULT_TARGET_BUCKET_ID
+
+
+@app.post("/api/resync-classified")
+def resync_classified(req: ResyncClassifiedRequest) -> Dict[str, Any]:
+    """Back up, delete and rebuild the 'classified' Activity-tab host buckets, as a tracked background task."""
+    active_task = task_manager.get_active_task()
+    if active_task and active_task.task_type == "pipeline_run":
+        return {"status": "already_running", "task_id": active_task.id, "task": active_task.to_dict()}
+    task = task_manager.start_task(
+        task_type="pipeline_run",
+        target_fn=aw_client.resync_classified_host,
+        metadata={"target_bucket_id": req.target_bucket_id, "mode": "resync_classified"},
+        fn_kwargs={
+            "target_bucket_id": req.target_bucket_id.strip() or DEFAULT_TARGET_BUCKET_ID,
+            "backup_path": DATA_DIR / "classified_host_backup.json",
+        },
+    )
+    return {"status": "started", "task_id": task.id, "task": task.to_dict()}
 
 
 @app.post("/api/correct-event")
@@ -444,7 +504,12 @@ if static_dir.exists():
 def serve_ui():
     index_file = BASE_DIR / "static" / "index.html"
     if index_file.exists():
-        return FileResponse(str(index_file))
+        # Versioned asset URLs: a browser holding an old app.js fetches the new one instead of reusing it.
+        html = index_file.read_text(encoding="utf-8")
+        for asset in ("app.js", "styles.css"):
+            version = int((BASE_DIR / "static" / asset).stat().st_mtime)
+            html = html.replace(f'"/static/{asset}"', f'"/static/{asset}?v={version}"')
+        return HTMLResponse(html)
     return {"message": "ActivityWatch Classifier API is running. UI index.html not yet built."}
 
 

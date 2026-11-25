@@ -4,6 +4,7 @@ import concurrent.futures
 import json
 import logging
 import math
+import os
 import re
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
@@ -368,7 +369,7 @@ class GemmaOracle:
                 payload["grammar"] = self._build_grammar(taxonomy)
             else:
                 payload["response_format"] = {"type": "json_object"}
-            with httpx.Client(timeout=45.0) as client:
+            with httpx.Client(timeout=float(os.environ.get("LLM_TIMEOUT", "45"))) as client:
                 resp = client.post(url, json=payload, headers=headers)
                 resp.raise_for_status()
                 data = resp.json()

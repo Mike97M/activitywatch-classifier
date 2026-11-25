@@ -30,6 +30,46 @@ from gemma_oracle import HEURISTIC_BACKEND, GemmaOracle
 logger = logging.getLogger("pipeline")
 
 _URL_MATCH_SLACK = timedelta(seconds=2)
+# classified_by of events a deferred run (defer_llm=True) left for classify_pending() to send to the LLM.
+DEFERRED = "deferred"
+
+
+def web_app_slug(source_id: str) -> str:
+    """App name for events of buckets that record none (browser web watchers), from the bucket ID."""
+    s = source_id.lower()
+    for key, slug in (("firefox", "firefox"), ("brave", "brave"), ("chromium", "chromium"),
+                      ("chrome", "chromium"), ("edge", "edge"), ("web", "browser")):
+        if key in s:
+            return slug
+    return ""
+
+
+# Saved app names for those slugs, matching the desktop window watcher's, so one browser is one app in
+# ActivityWatch. The classifier keeps seeing the slug: its memory cache is keyed on "app:brave".
+WEB_APP_DISPLAY = {"brave": "Brave-browser", "firefox": "Firefox", "edge": "Microsoft-edge"}
+
+
+def feature_data(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Saved event data as the classifier saw it (display app name mapped back to the slug)."""
+    slug = web_app_slug(str(data.get("source_bucket", "")))
+    if slug and WEB_APP_DISPLAY.get(slug) == data.get("app"):
+        return {**data, "app": slug}
+    return data
+
+
+def _with_label(data: Dict[str, Any], cat: str, sub: str, full: str, conf: float, by: str, reasoning: str) -> Dict[str, Any]:
+    """Copy of event data carrying the classification fields written to the target bucket."""
+    return {
+        **data,
+        "category": cat,
+        "subcategory": sub,
+        "full_category": full,
+        "category_hierarchy": [cat, sub],
+        "$category": [cat, sub],
+        "confidence": round(conf, 4),
+        "classified_by": by,
+        "reasoning": reasoning,
+    }
 # Browser names as whole words: "Brave-browser", "org.mozilla.firefox", "org.chromium.Chromium" match,
 # "sqlitebrowser" (DB Browser for SQLite) does not.
 _BROWSER_RE = re.compile(r"(?<![a-z])(brave|firefox|librewolf|chromium|chrome|msedge|edge|opera|vivaldi|zen)(?![a-z])")
@@ -146,8 +186,14 @@ class ClassificationPipeline:
         collect_training_data: bool = True,
         max_streams: Optional[int] = None,
         force_reclassify: bool = False,
+        defer_llm: bool = False,
     ) -> Dict[str, Any]:
-        """Clone events from source buckets by count or time range, filter AFK intervals, and classify."""
+        """Clone events from source buckets by count or time range, filter AFK intervals, and classify.
+
+        defer_llm: rules, memory and the fast classifier still run, but events below the threshold are
+        saved with the fast guess and classified_by=DEFERRED instead of waiting for the LLM;
+        classify_pending() labels them later.
+        """
         active_streams = max_streams if max_streams is not None else self.max_streams
         threshold = (
             confidence_threshold
@@ -369,17 +415,7 @@ class ClassificationPipeline:
 
             # If app is empty (common in web watcher buckets), infer from bucket ID
             if not app and source_id:
-                s_lower = source_id.lower()
-                if "firefox" in s_lower:
-                    app = "firefox"
-                elif "brave" in s_lower:
-                    app = "brave"
-                elif "chromium" in s_lower or "chrome" in s_lower:
-                    app = "chromium"
-                elif "edge" in s_lower:
-                    app = "edge"
-                elif "web" in s_lower:
-                    app = "browser"
+                app = web_app_slug(source_id)
                 if app:
                     clean_data["app"] = app
 
@@ -489,6 +525,16 @@ class ClassificationPipeline:
                     },
                 })
 
+        deferred_events = 0
+        if defer_llm:
+            for indices in events_needing_gemma.values():
+                for e_idx in indices:
+                    r = event_records[e_idx]
+                    r["classified_by"] = DEFERRED
+                    r["reasoning"] = f"Low confidence ({r['chosen_confidence']:.2f}); awaiting LLM"
+                    deferred_events += 1
+            events_needing_gemma = {}
+
         # Pass 2: Batch Gemma multi-stream parallel decoding for unique signatures
         unique_sigs = list(events_needing_gemma.keys())
         if unique_sigs:
@@ -535,29 +581,14 @@ class ClassificationPipeline:
                 backend_info = gemma_res.get("backend", "oracle")
                 by = f"gemma_e2b ({backend_info})"
                 reas = gemma_res.get("reasoning", "")
+                if backend_info == HEURISTIC_BACKEND:
+                    # LLM unreachable: keep the heuristic guess, but tag it so classify_pending() retries it.
+                    by = DEFERRED
+                    reas = f"LLM unreachable; heuristic guess ({reas})"
+                    deferred_events += len(events_needing_gemma[sig])
                 
-                feat_text = gemma_sig_features[sig]
-                # Collect training samples ONLY from confident real LLM results; a low-confidence
-                # guess or a heuristic fallback (LLM down/timeout) must not become a permanent cached label.
-                if (
-                    collect_training_data
-                    and conf >= (
-                        LOGPROB_LABEL_MIN_CONFIDENCE
-                        if gemma_res.get("confidence_source") == "logprobs"
-                        else LABEL_MIN_CONFIDENCE
-                    )
-                    and backend_info != HEURISTIC_BACKEND
-                ):
-                    added = self.classifier.add_training_sample(
-                        feature_text=feat_text,
-                        category=cat,
-                        subcategory=sub,
-                        source="gemma_e2b",
-                        retrain_now=False,
-                        retrain_batch_size=0,
-                    )
-                    if added:
-                        new_training_samples += 1
+                if collect_training_data and self._learn_from_llm(gemma_sig_features[sig], gemma_res):
+                    new_training_samples += 1
 
                 # Apply to all events sharing this exact signature
                 event_indices = events_needing_gemma[sig]
@@ -615,16 +646,12 @@ class ClassificationPipeline:
             subcategory_distribution[full] = subcategory_distribution.get(full, 0) + 1
             total_processed += 1
 
-            cloned_data = dict(rec["clean_data"])
-            cloned_data["category"] = cat
-            cloned_data["subcategory"] = rec["chosen_subcategory"]
-            cloned_data["full_category"] = full
-            cloned_data["category_hierarchy"] = [cat, rec["chosen_subcategory"]]
-            cloned_data["$category"] = [cat, rec["chosen_subcategory"]]
-            cloned_data["confidence"] = round(rec["chosen_confidence"], 4)
-            cloned_data["classified_by"] = rec["classified_by"]
-            cloned_data["reasoning"] = rec["reasoning"]
+            cloned_data = _with_label(
+                rec["clean_data"], cat, rec["chosen_subcategory"], full,
+                rec["chosen_confidence"], rec["classified_by"], rec["reasoning"],
+            )
             cloned_data["source_bucket"] = rec["source_id"]
+            cloned_data["app"] = WEB_APP_DISPLAY.get(cloned_data.get("app"), cloned_data.get("app"))
 
             new_event = {
                 "timestamp": rec["event"].get("timestamp"),
@@ -751,6 +778,7 @@ class ClassificationPipeline:
             "fast_classifier_calls": fast_calls,
             "rule_calls": rule_calls,
             "gemma_oracle_calls": gemma_calls,
+            "deferred_events": deferred_events,
             "confidence_threshold": threshold,
             "label_min_confidence": LABEL_MIN_CONFIDENCE,
             "logprob_label_min_confidence": LOGPROB_LABEL_MIN_CONFIDENCE,
@@ -778,3 +806,92 @@ class ClassificationPipeline:
             })
 
         return stats
+
+    def _learn_from_llm(self, feature_text: str, res: Dict[str, Any]) -> bool:
+        """Add a training sample ONLY from a confident real LLM result; a low-confidence guess or a
+        heuristic fallback (LLM down/timeout) must not become a permanent cached label."""
+        min_conf = LOGPROB_LABEL_MIN_CONFIDENCE if res.get("confidence_source") == "logprobs" else LABEL_MIN_CONFIDENCE
+        if float(res.get("confidence", 0.0)) < min_conf or res.get("backend") == HEURISTIC_BACKEND:
+            return False
+        return self.classifier.add_training_sample(
+            feature_text=feature_text,
+            category=res.get("category", "Uncategorized"),
+            subcategory=res.get("subcategory", "General Activity"),
+            source="gemma_e2b",
+            retrain_now=False,
+            retrain_batch_size=0,
+        )
+
+    def classify_pending(
+        self,
+        target_bucket_id: str = DEFAULT_TARGET_BUCKET_ID,
+        start_time: Optional[str] = None,
+        end_time: Optional[str] = None,
+        max_streams: Optional[int] = None,
+        collect_training_data: bool = True,
+        progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
+    ) -> Dict[str, Any]:
+        """Send the events a deferred run left in the target bucket to the LLM and replace them with labelled copies."""
+        events = self.aw_client.get_events(target_bucket_id, limit=-1, start=start_time, end=end_time)
+        by_sig: Dict[Tuple[str, str, str], List[Dict[str, Any]]] = {}
+        for ev in events:
+            d = ev.get("data") or {}
+            if d.get("classified_by") == DEFERRED:
+                by_sig.setdefault((d.get("app", ""), d.get("title", ""), d.get("url", "")), []).append(ev)
+        sigs = list(by_sig)
+
+        def on_progress(done: int, total: int):
+            if progress_callback:
+                pct = 5.0 + done / max(1, total) * 85.0
+                progress_callback({"step": "gemma_batch", "current": done, "total": total, "percent": round(pct, 1),
+                                   "message": f"Labelling deferred activities with the LLM: {done}/{total}..."})
+
+        results = self.gemma_oracle.classify_batch(
+            [{"id": i, "app": a, "title": t, "url": u} for i, (a, t, u) in enumerate(sigs)],
+            taxonomy=self.classifier.taxonomy,
+            max_streams=max_streams or self.max_streams,
+            progress_callback=on_progress,
+        ) if sigs else []
+
+        replacements: List[Dict[str, Any]] = []
+        old_ids: List[int] = []
+        new_samples = 0
+        for sig, res in zip(sigs, results):
+            backend = res.get("backend", "oracle")
+            if backend == HEURISTIC_BACKEND:
+                continue  # LLM unreachable: leave these deferred for the next attempt
+            cat = res.get("category", "Uncategorized")
+            sub = res.get("subcategory", "General Activity")
+            full = res.get("full_category", f"{cat} > {sub}")
+            conf = float(res.get("confidence", 0.0))
+            for ev in by_sig[sig]:
+                data = _with_label(ev["data"], cat, sub, full, conf, f"gemma_e2b ({backend})", res.get("reasoning", ""))
+                replacements.append({"timestamp": ev["timestamp"], "duration": ev.get("duration", 0.0), "data": data})
+                old_ids.append(ev["id"])
+            feature_text = self.classifier.extract_features(feature_data(by_sig[sig][0]["data"]))
+            if collect_training_data and self._learn_from_llm(feature_text, res):
+                new_samples += 1
+
+        # Insert before deleting: a failure part-way leaves a duplicate event, never a missing one.
+        if replacements:
+            self.aw_client.insert_events(target_bucket_id, replacements)
+            for event_id in old_ids:
+                self.aw_client.delete_event(target_bucket_id, event_id)
+        if new_samples:
+            self.classifier.retrain_full()
+        if replacements:
+            try:
+                from category_sync import sync_taxonomy_to_activitywatch
+                sync_taxonomy_to_activitywatch(self.aw_client, self.classifier)
+            except Exception as e:
+                logger.warning(f"Failed to auto-sync category rules to ActivityWatch: {e}")
+
+        deferred_total = sum(len(evs) for evs in by_sig.values())
+        return {
+            "target_bucket_id": target_bucket_id,
+            "deferred_events_found": deferred_total,
+            "unique_activities_sent_to_llm": len(sigs),
+            "events_labelled": len(replacements),
+            "still_deferred": deferred_total - len(replacements),
+            "new_training_samples_added": new_samples,
+        }
